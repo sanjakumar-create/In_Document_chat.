@@ -41,7 +41,7 @@ public class DocumentIngestionService {
         // 3. Build the Ingestor Pipeline
         EmbeddingStoreIngestor ingestor = EmbeddingStoreIngestor.builder()
                 // Split the text into chunks of 500 characters, with a 50-character overlap
-                .documentSplitter(DocumentSplitters.recursive(500, 50))
+                .documentSplitter(DocumentSplitters.recursive(300, 60))
                 // Tell it to use Ollama to create the vector embeddings
                 .embeddingModel(embeddingModel)
                 // Tell it to save those embeddings into ChromaDB

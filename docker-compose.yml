@@ -1,12 +1,15 @@
 version: '3.9'
 services:
   chromadb:
-    image: chromadb/chroma:0.4.24 # <-- Pinned to a highly stable, compatible version
+    image: chromadb/chroma:0.4.24
     container_name: local-chromadb
     ports:
-      - "8888:8000" # <-- Tells your Mac to use 8888, avoiding port 8000 completely
+      - "8888:8000"  # Corrected: Mac 8888 -> Container 8000
     volumes:
       - chroma-data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
 
 volumes:

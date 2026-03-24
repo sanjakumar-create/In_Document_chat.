@@ -9,12 +9,13 @@ import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class ChatbotService {
@@ -22,8 +23,6 @@ public class ChatbotService {
     private final ChatLanguageModel llama3;
     private final EmbeddingModel embeddingModel;
     private final EmbeddingStore<TextSegment> embeddingStore;
-
-    // FEATURE 1: Conversational Memory (Remembers the last 10 messages)
     private final ChatMemory chatMemory;
 
     public ChatbotService(ChatLanguageModel chatLanguageModel,
@@ -38,14 +37,20 @@ public class ChatbotService {
     public ChatResponse askAdvancedQuestion(String question) {
         System.out.println("User asked: " + question);
 
-        // Add user's new question to the memory
-        chatMemory.add(UserMessage.from(question));
-
-        // 1. Retrieve raw chunks from ChromaDB
+        // 1. Embed the Question
         dev.langchain4j.data.embedding.Embedding questionEmbedding = embeddingModel.embed(question).content();
-        List<EmbeddingMatch<TextSegment>> rawChunks = embeddingStore.findRelevant(questionEmbedding, 3, 0.6);
 
-        // FEATURE 2: Corrective RAG (CRAG) Evaluator
+        // 2. Retrieve using the NEW LangChain4j Search API
+        EmbeddingSearchRequest searchRequest = EmbeddingSearchRequest.builder()
+                .queryEmbedding(questionEmbedding)
+                .maxResults(5) // Pull top 5 chunks
+                .minScore(0.70) // Must be at least 70% relevant
+                .build();
+
+        EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(searchRequest);
+        List<EmbeddingMatch<TextSegment>> rawChunks = searchResult.matches();
+
+        // 3. CRAG Evaluator using Java Text Blocks (No more messy concatenation!)
         List<String> verifiedChunks = new ArrayList<>();
         List<String> citations = new ArrayList<>();
 
@@ -54,52 +59,52 @@ public class ChatbotService {
         for (EmbeddingMatch<TextSegment> match : rawChunks) {
             String chunkText = match.embedded().text();
 
-            // Ask the LLM to grade the chunk strictly
-            String evalPrompt = String.format(
-                    "You are a strict grader. Does the following document contain information relevant to answering the question: '%s'?\n" +
-                            "Document: %s\n" +
-                            "Reply with EXACTLY 'YES' or 'NO'. Do not explain.",
-                    question, chunkText
-            );
+            String evalPrompt = """
+                    You are a strict grader. Does the following document contain information relevant to answering the question: '%s'?
+                    
+                    Document: %s
+                    
+                    Reply with EXACTLY 'YES' or 'NO'. Do not explain.
+                    """.formatted(question, chunkText);
 
             String grade = llama3.generate(evalPrompt).trim();
 
             if (grade.toUpperCase().contains("YES")) {
                 verifiedChunks.add(chunkText);
-                citations.add(chunkText); // Add to our citations list
+                citations.add(chunkText);
                 System.out.println("CRAG: Chunk Approved ✅");
             } else {
                 System.out.println("CRAG: Chunk Rejected ❌");
             }
         }
 
-        // 3. Fallback: If CRAG rejected all chunks (Zero Hallucination Guarantee)
+        // 4. Fallback for Zero Hallucinations
         if (verifiedChunks.isEmpty()) {
             String noDataResponse = "I'm sorry, the uploaded document does not contain the answer to this question.";
             chatMemory.add(AiMessage.from(noDataResponse));
             return new ChatResponse(noDataResponse, List.of("No relevant sources found."));
         }
 
-        // 4. Build the final context from ONLY the verified chunks
+        // 5. Build the final context
         String context = String.join("\n\n---\n\n", verifiedChunks);
 
-        // 5. Build the final prompt using Context AND Chat History
-        String memoryContext = chatMemory.messages().stream()
-                .map(m -> m.type() + ": " + m.text())
-                .collect(Collectors.joining("\n"));
-
-        String finalPrompt = "You are an AI assistant. Use the provided Context to answer the User's latest question.\n" +
-                "Here is the recent conversation history for context:\n" + memoryContext + "\n\n" +
-                "Verified Document Context:\n" + context + "\n\n" +
-                "Answer the latest question clearly and concisely.";
+        // 6. Generate the Final Answer using a Text Block
+        String finalPrompt = """
+                You are an AI assistant. Use ONLY the provided Verified Document Context to answer the User's question.
+                
+                Verified Document Context:
+                %s
+                
+                Question: %s
+                """.formatted(context, question);
 
         System.out.println("Generating final synthesized answer...");
         String finalAnswer = llama3.generate(finalPrompt);
 
-        // Save AI's answer to memory for the next question
+        // Save the clean question and answer to memory for future context
+        chatMemory.add(UserMessage.from(question));
         chatMemory.add(AiMessage.from(finalAnswer));
 
-        // FEATURE 3: Return the structured response with Citations
         return new ChatResponse(finalAnswer, citations);
     }
 }
