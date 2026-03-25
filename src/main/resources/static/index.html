@@ -12,7 +12,7 @@
     <script src="https://unpkg.com/history@5/umd/history.development.js"></script>
     <script src="https://unpkg.com/react-router@6.3.0/umd/react-router.development.js"></script>
     <script src="https://unpkg.com/react-router-dom@6.3.0/umd/react-router-dom.development.js"></script>
-    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <!-- Fonts & Icons -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -99,7 +99,7 @@
 <body class="bg-background text-on-surface antialiased overflow-hidden selection:bg-primary/30 selection:text-primary">
 <div id="root"></div>
 
-<script type="text/babel">
+<script type="text/babel" data-presets="react,env">
     const { useState, useEffect, useCallback, useRef } = React;
     const { createRoot } = ReactDOM;
     const { MemoryRouter, Routes, Route, Link, useNavigate, useLocation } = ReactRouterDOM;
@@ -170,7 +170,7 @@
                 const res = await fetch(`${API_BASE}/api/status`, { signal: controller.signal });
                 if (res.ok) return res.json();
                 return null;
-            } catch { return null; }
+            } catch (e) { return null; }
         }
     };
 
@@ -178,12 +178,12 @@
     function useLocalStorage(key, def) {
         const [state, setState] = useState(() => {
             try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; }
-            catch { return def; }
+            catch (e) { return def; }
         });
         const set = useCallback((val) => {
             setState(prev => {
                 const next = typeof val === 'function' ? val(prev) : val;
-                try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+                try { localStorage.setItem(key, JSON.stringify(next)); } catch (e) {}
                 return next;
             });
         }, [key]);
@@ -316,7 +316,7 @@
 
         const clearChat = async () => {
             setMessages([]); setCurrentConvId(null); setExpandedCites({});
-            try { await VaultAPI.clearHistory(); } catch {}
+            try { await VaultAPI.clearHistory(); } catch (e) {}
         };
 
         const sendMessage = async () => {

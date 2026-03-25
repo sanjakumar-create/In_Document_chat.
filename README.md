@@ -1,464 +1,393 @@
 # The Vault — Local RAG Document Intelligence Platform
 
-A self-hosted AI document question-answering system built with Java, Spring Boot, and LangChain4j. The system implements a **Corrective Retrieval-Augmented Generation (CRAG)** pipeline that allows users to upload documents in various formats and ask natural language questions about them. The AI retrieves relevant passages, evaluates each one for relevance before using it, and returns a cited answer grounded exclusively in the uploaded content.
+A self-hosted AI document question-answering system built with Java, Spring Boot, and LangChain4j. Upload documents in any common format and ask natural-language questions about them. The system retrieves relevant passages from the document, evaluates each one for relevance before using it, and returns an answer that is grounded exclusively in the uploaded content, with citations pointing to the exact source passages used.
 
-All inference, embedding, and vector storage run entirely on the local machine — no external API calls are made, and no document content is transmitted over the network.
+All inference, embedding, and vector storage run entirely on the local machine. No document content is transmitted to any external service.
 
 ---
 
 ## Table of Contents
 
-1. [System Overview](#system-overview)
-2. [How the Components Connect](#how-the-components-connect)
-3. [Technology Decisions](#technology-decisions)
-4. [Prerequisites](#prerequisites)
-5. [Installation](#installation)
-6. [Running the Application](#running-the-application)
-7. [Using the Interface](#using-the-interface)
-8. [API Reference](#api-reference)
-9. [Configuration](#configuration)
-10. [Project Structure](#project-structure)
-11. [Stopping and Restarting Services](#stopping-and-restarting-services)
-12. [Troubleshooting](#troubleshooting)
+1. [How All the Pieces Fit Together](#how-all-the-pieces-fit-together)
+2. [Prerequisites](#prerequisites)
+3. [Setup (Docker — recommended)](#setup-docker--recommended)
+4. [Setup (Local Java — for development)](#setup-local-java--for-development)
+5. [Using the Interface](#using-the-interface)
+6. [API Reference](#api-reference)
+7. [Configuration](#configuration)
+8. [Project Structure](#project-structure)
+9. [Stopping and Restarting](#stopping-and-restarting)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
-## System Overview
+## How All the Pieces Fit Together
 
-The application consists of four separate processes that must all be running simultaneously:
-
-| Process | What it does | Port |
-|---------|-------------|------|
-| **Spring Boot** (this app) | Serves the web UI and exposes the REST API | 8080 |
-| **Ollama** | Runs AI models locally on your machine's CPU/GPU | 11434 |
-| **ChromaDB** (via Docker) | Stores and searches document vectors | 8888 |
-| **Browser** | Renders the React UI served by Spring Boot | — |
-
-Spring Boot is the central coordinator. It receives file uploads from the browser, calls Ollama to generate embeddings, writes those embeddings into ChromaDB, and later orchestrates the full CRAG query pipeline when a user asks a question.
-
----
-
-## How the Components Connect
-
-Understanding how data moves through the system is essential before running or modifying anything.
-
-### Document Ingestion Flow
-
-When a user uploads a file through the browser, the following sequence occurs:
+The application is composed of four processes. Understanding what each one does and how they connect is important before running or modifying anything.
 
 ```
-Browser (drag & drop)
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Your machine                                                           │
+│                                                                         │
+│   Browser ──────────► Spring Boot app (port 8080)                       │
+│                              │                                          │
+│                  ┌───────────┴───────────┐                              │
+│                  │                       │                              │
+│            Ollama (port 11434)    ChromaDB (port 8888)                  │
+│            Llama 3 + nomic-       Vector database                       │
+│            embed-text             Stores document                       │
+│            Run AI inference       embeddings                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Spring Boot** is the central coordinator. It receives file uploads from the browser, calls Ollama to produce embeddings, stores those embeddings in ChromaDB, and later runs the full CRAG query pipeline when a user asks a question. It also serves the React web UI directly — there is no separate frontend server.
+
+**Ollama** is a tool that downloads and runs large language models locally on your CPU or GPU. It exposes a simple HTTP API on port 11434. Spring Boot calls this API to:
+- Convert text chunks into numerical vectors (using `nomic-embed-text`, the embedding model)
+- Grade retrieved chunks as YES or NO for relevance (using `llama3`, the generation model)
+- Generate the final synthesized answer (using `llama3`)
+
+**ChromaDB** is a vector database. After Ollama converts a text chunk into a vector, Spring Boot writes that vector and the original text into ChromaDB. When a question is asked, ChromaDB finds the stored vectors most mathematically similar to the question's vector — this is semantic search, not keyword search.
+
+**Ollama runs natively on the host machine, not inside Docker.** This is intentional. Docker cannot access your GPU directly on macOS (Apple Silicon Metal) and involves extra complexity on other platforms. Ollama must run natively to use your GPU for fast inference. ChromaDB and the Spring Boot app run inside Docker containers, and they reach Ollama via `host.docker.internal:11434`.
+
+### Document Ingestion — what happens when you upload a file
+
+```
+Browser (drag & drop a PDF, DOCX, TXT, etc.)
     │
-    │  POST /api/documents/upload  (multipart/form-data)
+    │  POST /api/documents/upload
     ▼
-IngestionController.java
-    │  saves file bytes to a OS temp directory
+Spring Boot — IngestionController
+    │  saves file bytes to OS temp directory
     ▼
-DocumentIngestionService.java
+DocumentIngestionService
     │
     ├─► Apache Tika
-    │       Reads the raw file bytes and extracts plain text regardless of format
-    │       (PDF, DOCX, XLSX, TXT, CSV, PPTX are all handled the same way)
+    │       Reads the raw file bytes and extracts plain text.
+    │       Handles 1,000+ formats transparently — PDF, DOCX, XLSX,
+    │       PPTX, TXT, CSV all go through the same code path.
     │
     ├─► LangChain4j DocumentSplitter
-    │       Cuts the plain text into overlapping chunks
-    │       (chunk size: 300 characters, overlap: 60 characters)
-    │       Overlap prevents context loss at chunk boundaries
+    │       Cuts the plain text into overlapping chunks.
+    │       Chunk size: 300 characters. Overlap: 60 characters.
+    │       The overlap prevents context from being lost at boundaries.
     │
-    ├─► Ollama — nomic-embed-text model  (port 11434)
-    │       Converts each text chunk into a high-dimensional numerical vector
-    │       that encodes its semantic meaning
+    ├─► Ollama — nomic-embed-text (port 11434)
+    │       Converts each text chunk into a 768-dimensional numerical
+    │       vector that encodes the semantic meaning of the text.
     │
-    └─► ChromaDB  (port 8888)
-            Stores each (vector, original text) pair in the
-            "my_notebook_docs" collection for later retrieval
+    └─► ChromaDB (port 8888)
+            Stores each (vector, original text) pair permanently
+            in the "my_notebook_docs" collection.
 ```
 
-### CRAG Query Flow
+### CRAG Query — what happens when you ask a question
 
-When a user types a question and sends it, the system runs the Corrective RAG pipeline:
+CRAG (Corrective Retrieval-Augmented Generation) adds an evaluation step that standard RAG omits. Before using a retrieved chunk to construct an answer, the system asks the AI whether that chunk actually answers the question. Chunks that fail the evaluation are discarded. This prevents the model from filling gaps with information from its training data rather than from the uploaded document.
 
 ```
 Browser
     │
     │  GET /api/chat/ask?question=...&minScore=0.70&maxResults=5
     ▼
-ChatController.java
-    ▼
-ChatbotService.java — askAdvancedQuestion()
+Spring Boot — ChatController → ChatbotService
     │
     ├─► Step 1: Embed the question
-    │       Ollama (nomic-embed-text) converts the question text into a vector
-    │       using the same model used during ingestion, so the vector spaces match
+    │       Ollama (nomic-embed-text) converts the question into a vector
+    │       using the same model as ingestion, so the spaces are compatible.
     │
     ├─► Step 2: Vector search
-    │       ChromaDB receives the question vector and returns the top N chunks
-    │       whose stored vectors are closest to it (cosine similarity ≥ minScore)
+    │       ChromaDB returns the top N chunks whose stored vectors are
+    │       closest to the question vector (cosine similarity ≥ minScore).
     │
-    ├─► Step 3: CRAG Evaluation loop  ← the key differentiator
-    │       For each retrieved chunk, ChatbotService sends a separate prompt to
-    │       Llama 3 asking exactly: "Does this chunk answer the question? YES or NO"
-    │       Chunks that receive NO are discarded entirely and never used in the answer.
-    │       This prevents the model from hallucinating by filling in gaps.
+    ├─► Step 3: CRAG evaluation loop
+    │       For every retrieved chunk, Spring Boot sends a prompt to Llama 3:
+    │       "Does this chunk answer [question]? Reply YES or NO."
+    │       Chunks that receive NO are discarded entirely.
     │
-    ├─► Step 4: Fallback on empty result
-    │       If every chunk is rejected, the system returns a fixed "not found"
-    │       response rather than attempting to answer from model weights alone
+    ├─► Step 4: Fallback
+    │       If every chunk is rejected, the system returns a fixed
+    │       "not found" response. It does not attempt to answer from
+    │       the model's general training knowledge.
     │
     ├─► Step 5: Final synthesis
-    │       Only the verified chunks are assembled into a context block.
-    │       Llama 3 is called a final time with the instruction to answer
-    │       ONLY from that verified context — not from general knowledge.
+    │       The verified chunks are assembled into a context block.
+    │       Llama 3 is called with the instruction to answer ONLY from
+    │       that context — not from general knowledge.
     │
-    └─► Step 6: Return response
+    └─► Step 6: Response
             { "answer": "...", "citations": ["chunk1...", "chunk2..."] }
-            The citations array contains the exact text the answer was built from.
 ```
-
-### Why the Frontend Needs No Build Step
-
-The React UI lives in `src/main/resources/static/index.html`. Spring Boot automatically serves any file placed in `src/main/resources/static/` as a static web asset. The file uses Babel Standalone loaded from a CDN, which compiles JSX in the browser at runtime. This means there is no `npm install`, no `webpack`, and no separate frontend server — opening `http://localhost:8080` in a browser is sufficient.
-
----
-
-## Technology Decisions
-
-**Why LangChain4j instead of calling Ollama directly?**
-LangChain4j abstracts the embedding pipeline, document splitting, vector store integration, and chat memory into composable building blocks. Writing these against raw HTTP calls would require significant boilerplate and would be harder to swap out.
-
-**Why ChromaDB version 0.4.24 specifically?**
-Newer ChromaDB versions (≥ 0.5.x) removed the `/api/v1/` endpoint prefix that LangChain4j 0.36.2 uses internally. Sending a request to a newer ChromaDB returns `405 Method Not Allowed`. The version is pinned in `docker-compose.yml` and must not be changed without a corresponding LangChain4j upgrade.
-
-**Why nomic-embed-text for embeddings and llama3 for generation?**
-These are two separate roles. `nomic-embed-text` is a small, fast model optimized specifically for converting text into dense vectors — it does not generate language. `llama3` is a general-purpose language model used for both the YES/NO chunk evaluation and the final answer synthesis. Using the same embedding model at ingestion time and at query time ensures the vector spaces are compatible.
-
-**Why chunk size 300 with 60-character overlap?**
-Smaller chunks give more precise retrieval — a 2000-character chunk retrieved for one sentence inside it carries a lot of irrelevant text into the context window. The 60-character overlap ensures that sentences at the boundary of two adjacent chunks are represented in both, so a match near a boundary is not lost.
 
 ---
 
 ## Prerequisites
 
-The following tools must be installed before proceeding. Each section includes installation instructions for macOS, Ubuntu/Debian Linux, and Windows.
+You need two tools installed on your machine. Java and Maven are **not** required if you use the Docker setup.
 
 ---
 
-### Java 21
+### 1. Docker Desktop
 
-The application requires Java Development Kit (JDK) version 21 exactly. Spring Boot 4.x does not support older JDK versions.
+Docker Desktop runs ChromaDB and the Spring Boot application inside isolated containers. It must be running before any `docker` or `docker-compose` commands will work.
 
-**macOS — using Homebrew:**
-```bash
-brew install openjdk@21
+**macOS:** Download and run the installer from https://www.docker.com/products/docker-desktop
 
-# Add to your shell profile so the terminal can find it
-echo 'export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
+**Windows:** Download and run the installer from https://www.docker.com/products/docker-desktop
+After installation, ensure "Use WSL 2 based engine" is enabled in Docker Desktop settings.
 
 **Ubuntu / Debian:**
 ```bash
-sudo apt update
-sudo apt install openjdk-21-jdk -y
+# Add Docker's official GPG key and repository
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Allow running Docker without sudo
+sudo usermod -aG docker $USER
+newgrp docker
 ```
 
-**Windows:**
-Download the JDK 21 installer from https://jdk.java.net/21/
-Run the installer, then add the `bin` directory to your `PATH` system environment variable.
-For example: `C:\Program Files\Java\jdk-21\bin`
-
-**Verify the installation:**
+After installation, launch Docker Desktop (macOS/Windows) or start the Docker service (Linux):
 ```bash
-java -version
+# Linux only
+sudo systemctl start docker
+sudo systemctl enable docker
 ```
-Expected output (version number may vary):
-```
-openjdk version "21.0.x" 2024-xx-xx
-OpenJDK Runtime Environment ...
-```
-
----
-
-### Apache Maven
-
-Maven is the build tool used to compile the Java source code and manage dependencies.
-
-**macOS — using Homebrew:**
-```bash
-brew install maven
-```
-
-**Ubuntu / Debian:**
-```bash
-sudo apt install maven -y
-```
-
-**Windows:**
-Download the binary ZIP from https://maven.apache.org/download.cgi
-Extract it, then add its `bin` directory to your `PATH` environment variable.
-
-**Verify:**
-```bash
-mvn -version
-```
-Expected output:
-```
-Apache Maven 3.x.x
-Java version: 21.x.x
-```
-
----
-
-### Docker Desktop
-
-Docker is used to run ChromaDB in an isolated container. Docker Desktop is the simplest way to get Docker on macOS and Windows.
-
-Download and install from: https://www.docker.com/products/docker-desktop
-
-After installation, launch Docker Desktop from your applications. Wait until the whale icon in the system tray stops animating — that indicates Docker's internal engine is fully started. All subsequent `docker` commands require this engine to be running.
 
 **Verify:**
 ```bash
 docker --version
-```
-Expected output:
-```
-Docker version 24.x.x, build ...
-```
+# Expected: Docker version 24.x.x or higher
 
-```bash
+docker compose version
+# Expected: Docker Compose version v2.x.x
+
 docker ps
+# Expected: an empty table, no error
 ```
-This should print an empty table (no containers yet) without any error.
 
 ---
 
-### Ollama
+### 2. Ollama
 
-Ollama is a tool that downloads and runs large language models locally. It exposes them over a local HTTP API on port 11434, which LangChain4j calls directly.
+Ollama downloads and runs large language models on your local machine. It runs as a background service and exposes an HTTP API on port 11434.
 
 **macOS / Linux:**
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ```
-This script installs Ollama and registers it as a background service that starts automatically.
 
-**Windows:**
-Download the installer from https://ollama.com/download and run it.
+**Windows:** Download and run the installer from https://ollama.com/download
+
+After installation on macOS and Linux, Ollama registers itself as a background service and starts automatically. On Windows it also starts as a background service after installation.
 
 **Verify:**
 ```bash
 ollama --version
-```
-Expected output:
-```
-ollama version 0.x.x
-```
+# Expected: ollama version 0.x.x
 
-Check that the Ollama service is responding:
-```bash
 curl http://localhost:11434
+# Expected: Ollama is running
 ```
-Expected response: `Ollama is running`
 
-If you get a connection error, start Ollama manually:
+If you get a connection error on the curl step, Ollama's service did not start automatically. Start it manually:
 ```bash
 ollama serve
+# Leave this terminal open
 ```
-Leave this terminal open (or configure it as a background service before proceeding).
 
 ---
 
-## Installation
+## Setup (Docker — recommended)
 
-### 1. Clone the repository
+This approach requires only Docker Desktop and Ollama. Java and Maven are not needed on your machine — the application compiles itself inside a Docker build stage.
+
+### Step 1 — Clone the repository
 
 ```bash
-git clone <your-repository-url>
+git clone <repository-url>
 cd In_Document_chat
 ```
 
-### 2. Download the AI models
-
-These are one-time downloads. They are stored in Ollama's local model cache and do not need to be re-downloaded on subsequent runs.
+### Step 2 — Run the setup command
 
 ```bash
-# Llama 3 — used for CRAG evaluation and answer synthesis (~4.7 GB)
-ollama pull llama3
-
-# Nomic Embed Text — used to convert text into vectors (~274 MB)
-ollama pull nomic-embed-text
+make setup
 ```
 
-Confirm both models are present:
-```bash
-ollama list
-```
-Expected output (timestamps and sizes will vary):
-```
-NAME                    ID              SIZE    MODIFIED
-llama3:latest           ...             4.7 GB  ...
-nomic-embed-text:latest ...             274 MB  ...
-```
+This single command does five things in sequence:
+1. Confirms Docker is running
+2. Confirms Ollama is running
+3. Downloads the two AI models (`llama3` ~4.7 GB, `nomic-embed-text` ~274 MB)
+4. Builds the Spring Boot Docker image (first build downloads ~300 MB of Maven dependencies — subsequent builds use Docker's layer cache)
+5. Starts ChromaDB and the Spring Boot app in containers
 
-### 3. Start ChromaDB
+The first run takes 10–20 minutes depending on your internet connection and hardware. Subsequent runs take under 30 seconds because Docker caches all downloaded layers.
 
-The project includes a `docker-compose.yml` file that starts ChromaDB with a named Docker volume. A named volume means the vector data is persisted across container restarts — stopping and restarting ChromaDB does not erase your ingested documents.
-
-```bash
-docker-compose up -d
+When setup completes, you will see:
+```
+=== Service Status ===
+  Ollama    (port 11434): ONLINE
+  ChromaDB  (port 8888):  ONLINE
+  App       (port 8080):  ONLINE
 ```
 
-The `-d` flag runs the container in the background (detached mode).
-
-Confirm ChromaDB is healthy:
-```bash
-curl http://localhost:8888/api/v1/heartbeat
-```
-Expected response:
-```json
-{"nanosecond heartbeat": 12345678901234}
-```
-
-If you prefer not to use Docker Compose, the equivalent manual command is:
-```bash
-docker run -d \
-  -p 8888:8000 \
-  --name local-chroma \
-  chromadb/chroma:0.4.24
-```
-Note that this approach does **not** use a named volume, so all vectors are lost if you run `docker rm`.
-
----
-
-## Running the Application
-
-With Ollama running and ChromaDB healthy, start the Spring Boot application:
-
-```bash
-mvn spring-boot:run
-```
-
-The first time you run this, Maven downloads all Java dependencies from Maven Central (approximately 300–500 MB). This is a one-time operation. Subsequent runs start in seconds.
-
-Watch the terminal output. When you see lines similar to the following, the application is ready:
-
-```
-  .   ____          _            __ _ _
- /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
-...
-Started Application in 4.321 seconds (process running for 4.8)
-Application Started
-```
-
-Verify the backend is responding:
-```bash
-curl http://localhost:8080/api/status
-```
-Expected response:
-```json
-{
-  "status": "online",
-  "generationModel": "llama3",
-  "embeddingModel": "nomic-embed-text",
-  "vectorStore": "ChromaDB",
-  "version": "1.0.0"
-}
-```
-
-Open the application in your browser:
+Then open your browser and navigate to:
 ```
 http://localhost:8080
 ```
 
-The web interface loads directly — there is no separate frontend process to start.
+### Windows users (no make)
 
-### Quick-start summary (all four steps at once)
+If you are on Windows and `make` is not available, run these commands individually:
 
-If all prerequisites are already installed, the complete startup sequence is:
+```bat
+rem Pull models
+ollama pull llama3
+ollama pull nomic-embed-text
+
+rem Build and start
+docker compose up -d --build
+```
+
+---
+
+## Setup (Local Java — for development)
+
+Use this approach if you want to run the Spring Boot application directly on your machine (for debugging, hot-reload, etc.) while still running ChromaDB in Docker.
+
+### Additional prerequisites
+
+**Java 21:**
+
+macOS:
+```bash
+brew install openjdk@21
+echo 'export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Ubuntu/Debian:
+```bash
+sudo apt update && sudo apt install openjdk-21-jdk -y
+```
+
+Windows: Download the JDK 21 installer from https://jdk.java.net/21/ and add its `bin` directory to your `PATH`.
+
+**Maven:**
+
+macOS:
+```bash
+brew install maven
+```
+
+Ubuntu/Debian:
+```bash
+sudo apt install maven -y
+```
+
+Windows: Download the binary ZIP from https://maven.apache.org/download.cgi and add its `bin` to `PATH`.
+
+**Verify both:**
+```bash
+java -version
+# Expected: openjdk version "21.x.x"
+
+mvn -version
+# Expected: Apache Maven 3.x.x, Java version: 21.x.x
+```
+
+### Starting services
 
 ```bash
-# Terminal 1 — if Ollama is not already running as a background service
-ollama serve
+# Step 1 — Pull AI models (one-time)
+ollama pull llama3
+ollama pull nomic-embed-text
 
-# Terminal 2 — start ChromaDB
-docker-compose up -d
+# Step 2 — Start ChromaDB only (not the app — you'll run that locally)
+docker compose up -d chromadb
 
-# Terminal 3 — start the application
+# Step 3 — Verify ChromaDB is healthy
+curl http://localhost:8888/api/v1/heartbeat
+# Expected: {"nanosecond heartbeat": ...}
+
+# Step 4 — Start the Spring Boot app
 mvn spring-boot:run
 ```
 
-Then open `http://localhost:8080`.
+First run downloads ~300 MB of Maven dependencies. When you see `Application Started` in the output, open `http://localhost:8080`.
 
 ---
 
 ## Using the Interface
 
-The interface has four screens accessible from the left sidebar.
-
 ### Workspace
 
-The main working screen. It is split into two panels:
+The main screen. Split into two panels:
 
-**Left panel — Knowledge Base**
+**Left — Knowledge Base**
 
-This is where you load documents into the system. You can either drag a file directly onto the dashed upload zone or click it to open a file picker.
+Drag a file onto the dashed upload zone, or click it to open a file picker. Supported types include PDF, DOCX, DOC, TXT, CSV, XLSX, XLS, and PPTX.
 
-Supported file types include PDF, DOCX, DOC, TXT, CSV, XLSX, XLS, and PPTX. Support extends to any format that Apache Tika can parse — the library handles over 1,000 file types.
+After a file is dropped, the zone shows "Ingesting & vectorizing…" while the system extracts text, splits it into chunks, embeds each chunk with Ollama, and writes the vectors into ChromaDB. This typically takes 15–90 seconds depending on file size and hardware.
 
-After you drop a file, the system uploads it to the server, extracts the text, splits it into chunks, runs embedding on each chunk, and writes the resulting vectors into ChromaDB. This process typically takes between 15 and 90 seconds depending on document size and your hardware. The upload zone shows an animated "Ingesting & vectorizing…" state while this is happening.
+Each successfully ingested file appears in the list with its name and size. Individual files can be removed from the list using the delete button that appears on hover.
 
-Each successfully ingested document appears in the list below the upload zone with its filename and size. You can remove individual documents from the list (this removes them from the UI tracking; vector data in ChromaDB is not deleted) or use "Clear All" to reset the list.
+**Right — Chat**
 
-**Right panel — Chat**
+Type a question and press **Enter** to send it. **Shift+Enter** inserts a line break without sending.
 
-Type a question about your document and press **Enter** to send it. **Shift+Enter** inserts a line break without sending.
+The four suggestion cards on the welcome screen are clickable shortcuts that pre-fill the input with a common question.
 
-If you have not yet typed anything, the panel shows four suggestion cards with common question starters. Clicking any card pre-fills the input box.
+Each AI response shows:
+- The synthesized answer
+- A green badge: "N verified sources" — the number of chunks that passed the CRAG evaluation
+- An amber badge: "No matching sources" — if all chunks were rejected, the system declines to answer rather than guessing
+- A **Show Sources** toggle that expands to reveal the exact text passages the answer was derived from
 
-Each AI response includes:
-- The synthesized answer in prose form
-- A badge showing how many document chunks passed the CRAG evaluation ("3 verified sources")
-- If no chunks passed evaluation, an amber "No matching sources" badge appears and the AI declines to answer rather than guessing
-- A **"Show Sources"** toggle that expands to reveal the exact text passages the answer was constructed from, along with a "Source N" label for each
-
-The **Clear Chat** button in the top-right resets the visible conversation and also calls `POST /api/chat/clear` to wipe the server-side conversation memory window.
+**Clear Chat** in the top-right resets the visible conversation and calls `POST /api/chat/clear` to reset the server-side memory window.
 
 ### Library
 
-A grid view of all documents that have been ingested in the current browser session. Each card displays the filename, file size, and the date and time it was uploaded. A **Chat** button on each card navigates back to the Workspace. The right column shows recent conversation threads.
+A grid of all documents ingested in the current browser session. Each card shows the filename, file size, upload date, and a **Chat** shortcut back to Workspace. Recent conversation threads are listed in the right column.
 
 ### History
 
-A log of every conversation session, stored in the browser's `localStorage`. Conversations are saved automatically — no action is required. The left column lists all sessions by their first question. Clicking a session displays the full Q&A exchange on the right, including which sources were cited in each answer. Individual sessions and the full history can be deleted here.
+Every conversation is automatically saved to the browser's `localStorage`. The left column lists sessions by their first question. Click a session to read the full Q&A exchange on the right, including which sources were cited. Sessions and the full history can be deleted.
 
 ### Settings
 
-**Test Connection** — sends a request to `GET /api/status` and displays the model names reported by the backend. Use this to confirm the backend is reachable before starting a session.
+| Control | Effect |
+|---------|--------|
+| **Test Connection** | Calls `GET /api/status` and shows the model names reported by the running backend |
+| **Similarity Threshold** | Slider 0.40–0.95. Minimum cosine similarity for a chunk to be retrieved from ChromaDB. Lower = broader retrieval; higher = more precise |
+| **Max Retrieved Chunks** | Slider 1–10. How many candidates ChromaDB returns before CRAG evaluates them |
 
-**Similarity Threshold** — a slider from 0.40 to 0.95. This controls the minimum cosine similarity required for a chunk to be returned from ChromaDB. A lower value retrieves more chunks but they may be loosely related. A higher value retrieves fewer, more precisely matched chunks. The displayed value is sent as the `minScore` query parameter on every `/api/chat/ask` request.
-
-**Max Retrieved Chunks** — a slider from 1 to 10. This controls how many candidate chunks ChromaDB returns before the CRAG evaluation step. More chunks means more evaluation calls to Llama 3, which increases response time but provides more material to work with.
-
-Both settings are saved to `localStorage` immediately and applied to subsequent requests without a page reload or server restart.
+Both retrieval settings are stored in `localStorage` and sent as query parameters on every chat request. Changes take effect immediately — no restart needed.
 
 ---
 
 ## API Reference
 
-All endpoints are served by Spring Boot at `http://localhost:8080`. The browser UI calls these internally, but they can also be used directly via cURL or any HTTP client.
-
----
+All endpoints are at `http://localhost:8080/api/`.
 
 ### GET /api/status
-
-Returns the current runtime status of the backend.
 
 ```bash
 curl http://localhost:8080/api/status
 ```
 
-Response:
 ```json
 {
   "status": "online",
@@ -469,90 +398,65 @@ Response:
 }
 ```
 
----
-
 ### POST /api/documents/upload
 
-Accepts a file via multipart form upload, ingests it through the full pipeline (Tika → splitter → embeddings → ChromaDB), and returns a confirmation string.
+Accepts a file upload from the browser via `multipart/form-data`.
 
 ```bash
 curl -X POST http://localhost:8080/api/documents/upload \
   -F "file=@/path/to/your/document.pdf"
 ```
 
-Success response:
-```
-✅ Successfully ingested and vectorized: document.pdf
-```
-
-Error response (if something fails during ingestion):
-```
-❌ Error ingesting file: <error message>
-```
-
----
+Success: `✅ Successfully ingested and vectorized: document.pdf`
+Failure: `❌ Error ingesting file: <message>`
 
 ### POST /api/documents/ingest
 
-An alternative to `/upload` for scripting use cases where the file already exists on the same machine as the server. Accepts an absolute file path as a query parameter.
+Alternative for scripts — accepts the file's absolute path on the server machine.
 
 ```bash
-curl -X POST "http://localhost:8080/api/documents/ingest?filePath=/Users/yourname/Downloads/report.pdf"
+curl -X POST "http://localhost:8080/api/documents/ingest?filePath=/absolute/path/to/file.pdf"
 ```
-
-Response format is identical to `/upload`.
-
----
 
 ### GET /api/chat/ask
 
-Runs the full CRAG pipeline and returns an answer with citations.
-
-**Parameters:**
+Runs the CRAG pipeline and returns an answer with citations.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `question` | string | required | The question to ask |
-| `minScore` | float | `0.70` | Minimum cosine similarity for chunk retrieval (0.0 – 1.0) |
-| `maxResults` | int | `5` | Number of chunks to retrieve from ChromaDB before CRAG evaluation |
+| `minScore` | float | `0.70` | Minimum cosine similarity for retrieval |
+| `maxResults` | int | `5` | Chunks to retrieve before CRAG evaluation |
 
 ```bash
-# With default retrieval settings
-curl "http://localhost:8080/api/chat/ask?question=What+are+the+main+findings+in+this+report"
+curl "http://localhost:8080/api/chat/ask?question=What+are+the+main+findings"
 
-# With custom retrieval settings
 curl "http://localhost:8080/api/chat/ask?question=What+risks+were+identified&minScore=0.75&maxResults=8"
 ```
 
-Response:
 ```json
 {
-  "answer": "The report identifies three primary operational risks...",
+  "answer": "The report identifies three primary risks...",
   "citations": [
-    "...the first verified text passage from the document...",
-    "...the second verified text passage from the document..."
+    "...first verified text passage from the document...",
+    "...second verified text passage from the document..."
   ]
 }
 ```
 
-If no document chunks pass the CRAG evaluation, the `citations` array is empty and the `answer` field contains a message indicating that the document does not contain information relevant to the question.
-
----
+If no chunks pass CRAG evaluation, `citations` is empty and `answer` states the document does not contain the relevant information.
 
 ### POST /api/chat/clear
 
-Clears the server-side conversation memory window. `ChatbotService` maintains a rolling window of the last 10 messages in memory. This endpoint resets it to empty.
+Resets the server-side conversation memory window (last 10 messages).
 
 ```bash
 curl -X POST http://localhost:8080/api/chat/clear
 ```
 
-Response:
-```
-✅ Conversation memory cleared
-```
+`✅ Conversation memory cleared`
 
-**Note:** The server holds a single shared memory instance. If multiple browser tabs are open, they all share the same memory and clearing from one tab affects all others.
+Note: The server holds a single shared memory instance. Multiple open browser tabs share the same memory.
 
 ---
 
@@ -560,43 +464,27 @@ Response:
 
 ### application.properties
 
-Located at `src/main/resources/application.properties`. This file configures the connections to Ollama.
+Located at `src/main/resources/application.properties`. All values support environment-variable overrides, which the Docker Compose file uses automatically.
 
 ```properties
-# Spring application name (used in logs)
-spring.application.name=local-notebooklm
-
 # Ollama — generation model
-# This model is called twice per user question: once for CRAG chunk evaluation
-# and once for the final answer synthesis.
-langchain4j.ollama.chat-model.base-url=http://localhost:11434
+langchain4j.ollama.chat-model.base-url=${LANGCHAIN4J_OLLAMA_CHAT_MODEL_BASE_URL:http://localhost:11434}
 langchain4j.ollama.chat-model.model-name=llama3
 langchain4j.ollama.chat-model.temperature=0.0
 
 # Ollama — embedding model
-# This model is called once per chunk during ingestion and once per user question.
-# It must be the same model used at ingestion time and at query time —
-# mixing models produces incompatible vector spaces and breaks retrieval.
-langchain4j.ollama.embedding-model.base-url=http://localhost:11434
+langchain4j.ollama.embedding-model.base-url=${LANGCHAIN4J_OLLAMA_EMBEDDING_MODEL_BASE_URL:http://localhost:11434}
 langchain4j.ollama.embedding-model.model-name=nomic-embed-text
+
+# ChromaDB
+chroma.base-url=${CHROMA_BASE_URL:http://localhost:8888}
 ```
 
-### VectorStoreConfig.java
+The syntax `${ENV_VAR:default}` means: use the environment variable if set, otherwise fall back to the default. When `docker-compose.yml` starts the app container, it sets all three environment variables to point at the sibling services using Docker's internal network names.
 
-Located at `src/main/java/com/example/local_notebooklm/config/VectorStoreConfig.java`. This file configures the ChromaDB connection and collection name.
+### Changing model names
 
-```java
-ChromaEmbeddingStore.builder()
-    .baseUrl("http://localhost:8888")
-    .collectionName("my_notebook_docs")
-    .build();
-```
-
-If you change the collection name, all previously ingested documents will not be found on queries because they are stored under the old name. You would need to re-ingest all documents.
-
-### Retrieval parameters at runtime
-
-The `minScore` and `maxResults` parameters do not require a server restart. They are passed as query parameters on each `/api/chat/ask` request. The Settings page in the UI writes these values to `localStorage` and reads them back on each send — changing them in Settings takes effect on the very next question.
+To use a different Ollama model, change `model-name` in `application.properties` and re-run `ollama pull <new-model-name>`. The embedding model name must be kept consistent — changing it after documents are already ingested will make existing vectors incompatible with new queries, because the two models produce different vector spaces. If you change the embedding model, you must wipe ChromaDB and re-ingest all documents.
 
 ---
 
@@ -605,170 +493,171 @@ The `minScore` and `maxResults` parameters do not require a server restart. They
 ```
 In_Document_chat/
 │
-├── docker-compose.yml                    ← Starts ChromaDB with a persistent named volume
-├── pom.xml                               ← Maven dependencies and build config
+├── Dockerfile                             ← Two-stage build: Maven compile → JRE runtime
+├── docker-compose.yml                     ← Starts chromadb + app; Ollama stays on host
+├── Makefile                               ← Developer convenience commands (make setup, run, etc.)
+├── pom.xml                                ← Maven dependencies
 │
 └── src/main/
     ├── java/com/example/local_notebooklm/
     │   │
-    │   ├── Application.java              ← Spring Boot entry point
+    │   ├── Application.java
     │   │
     │   ├── config/
-    │   │   ├── CorsConfig.java           ← Opens CORS for all origins (required for browser → API)
-    │   │   └── VectorStoreConfig.java    ← Defines the ChromaDB EmbeddingStore bean
-    │   │
+    │   │   ├── CorsConfig.java            ← Opens CORS for all origins (browser can call API)
+    │   │   └── VectorStoreConfig.java     ← Creates the ChromaDB EmbeddingStore bean;
+    │   │                                     reads chroma.base-url from properties
     │   ├── controller/
-    │   │   ├── ChatController.java       ← Routes /api/chat/ask and /api/chat/clear
-    │   │   ├── IngestionController.java  ← Routes /api/documents/upload and /api/documents/ingest
-    │   │   └── StatusController.java    ← Routes /api/status
+    │   │   ├── ChatController.java        ← /api/chat/ask  /api/chat/clear
+    │   │   ├── IngestionController.java   ← /api/documents/upload  /api/documents/ingest
+    │   │   └── StatusController.java      ← /api/status
     │   │
     │   ├── dto/
-    │   │   └── ChatResponse.java         ← Shape of the chat API response: { answer, citations[] }
+    │   │   └── ChatResponse.java          ← { answer: string, citations: string[] }
     │   │
     │   └── service/
-    │       ├── ChatbotService.java       ← Owns the CRAG pipeline and the ChatMemory instance
-    │       └── DocumentIngestionService.java  ← Owns the Tika → splitter → embedder → store pipeline
+    │       ├── ChatbotService.java        ← CRAG pipeline + ChatMemory singleton
+    │       └── DocumentIngestionService.java  ← Tika → splitter → embedder → ChromaDB
     │
     └── resources/
-        ├── application.properties        ← Ollama model URLs and names
+        ├── application.properties         ← Service URLs with env-var overrides
         └── static/
-            └── index.html               ← Full React UI; served automatically by Spring Boot at /
+            └── index.html                 ← React SPA; served at http://localhost:8080
 ```
 
 ---
 
-## Stopping and Restarting Services
+## Stopping and Restarting
 
-### Spring Boot application
-
-Press `Ctrl+C` in the terminal where `mvn spring-boot:run` is running.
-
-### ChromaDB
+### Using make
 
 ```bash
-# Stop the container (data in the named volume is preserved)
-docker-compose stop
-
-# Stop and remove the container (data in the named volume is still preserved)
-docker-compose down
-
-# Stop and remove everything including the volume (all ingested vectors are deleted)
-docker-compose down -v
+make stop       # Stop containers, preserve all data
+make run        # Restart stopped containers
+make rebuild    # Rebuild the Spring Boot image after code changes and restart
+make clean      # Remove containers AND all stored vectors (cannot be undone)
+make logs       # Follow the Spring Boot application logs
+make status     # Check all three services
 ```
 
-### Restart ChromaDB
+### Using docker compose directly
 
 ```bash
-docker-compose up -d
+# Stop, keep data
+docker compose stop
+
+# Start again
+docker compose start
+
+# Stop and delete containers (volume data is preserved)
+docker compose down
+
+# Stop and delete containers AND volumes (all vectors wiped)
+docker compose down -v
+
+# Rebuild the app image after a code change
+docker compose up -d --build app
+
+# Follow logs
+docker compose logs -f app
 ```
 
-### Ollama
-
-On macOS and Linux, Ollama runs as a system service after installation. To stop it:
+### Stopping Ollama
 
 ```bash
 # macOS
 launchctl stop com.ollama.ollama
 
-# Linux (systemd)
-sudo systemctl stop ollama
-```
-
-To start it again:
-```bash
-# macOS
-launchctl start com.ollama.ollama
-
 # Linux
-sudo systemctl start ollama
+sudo systemctl stop ollama
 
-# Any platform — manual foreground mode
-ollama serve
-```
-
-### Verify all services are running
-
-```bash
-curl -s http://localhost:11434          # Ollama:    should return "Ollama is running"
-curl -s http://localhost:8888/api/v1/heartbeat  # ChromaDB: should return heartbeat JSON
-curl -s http://localhost:8080/api/status        # Spring Boot: should return status JSON
+# Any platform — if you ran it manually in a terminal
+# Just press Ctrl+C in that terminal
 ```
 
 ---
 
 ## Troubleshooting
 
-### Spring Boot fails to start — "Connection refused" to ChromaDB or Ollama
+### `make: command not found` (Windows)
 
-The Spring Boot application does not hard-fail on startup if ChromaDB or Ollama are unreachable — it starts anyway. However, the first API call that requires them will fail. Verify both services are running using the three `curl` commands above before making any requests.
+`make` is not installed by default on Windows. Either install it via Chocolatey (`choco install make`) or run the underlying `docker compose` commands directly (see the Windows section under Setup).
 
-### ChromaDB returns `405 Method Not Allowed`
+### Setup fails: "Ollama is not running"
 
-You are running a ChromaDB version newer than `0.4.24`. Newer versions removed the `/api/v1/` prefix from their endpoints. LangChain4j 0.36.2 expects that prefix.
-
-```bash
-# Remove whatever container is running and replace with the pinned version
-docker rm -f $(docker ps -aq --filter "ancestor=chromadb/chroma")
-docker-compose up -d
-```
-
-### `ollama pull` fails or models are not listed
-
-Check whether Ollama is running:
-```bash
-curl http://localhost:11434
-```
-If this returns a connection error, start Ollama:
+Ollama must be running before `make setup`. Start it:
 ```bash
 ollama serve
 ```
-Then retry the pull.
+Then re-run `make setup`.
+
+### App container starts but questions fail with a connection error
+
+The app container cannot reach Ollama on the host. Verify:
+```bash
+curl http://localhost:11434
+```
+If Ollama is running but questions still fail, check the container logs:
+```bash
+docker compose logs app
+```
+Look for `Connection refused` to `host.docker.internal:11434`. On Linux this can happen if the `extra_hosts` entry in `docker-compose.yml` was removed. It must stay as `"host.docker.internal:host-gateway"`.
+
+### ChromaDB returns `405 Method Not Allowed`
+
+You are running a ChromaDB version newer than `0.4.24`. The `docker-compose.yml` pins it to `0.4.24` — this pin must not be changed without also upgrading LangChain4j. To restore the correct version:
+```bash
+docker compose down
+docker compose up -d
+```
 
 ### Ingestion succeeds but questions return "document does not contain the answer"
 
-This usually means the question's vector is not matching any stored chunk above the similarity threshold. Try:
-1. Lowering the similarity threshold in Settings (e.g., from 0.70 to 0.55)
-2. Rephrasing the question to use terminology closer to the document's language
-3. Checking in the terminal log (where `mvn spring-boot:run` is running) — it prints how many chunks were retrieved and whether each was approved or rejected by CRAG
+The CRAG evaluator rejected all retrieved chunks. Try:
+1. Lowering the Similarity Threshold in Settings (try 0.55)
+2. Checking the app logs — they print how many chunks were retrieved and whether each passed or failed CRAG:
+   ```bash
+   make logs
+   # or
+   docker compose logs -f app
+   ```
+3. Rephrasing the question to use wording closer to the document's own language
 
-### Maven download errors on first run
+### First Docker build is very slow
 
-Maven downloads dependencies from Maven Central. If your network connection dropped mid-download, the local cache may be corrupted.
-
-```bash
-mvn clean package -DskipTests -U
-```
-
-The `-U` flag forces Maven to re-download any snapshot or missing dependencies.
+The first build downloads Maven dependencies (~300 MB) inside the container. This is a one-time operation. Docker caches the downloaded dependencies as a separate image layer. As long as `pom.xml` does not change, subsequent builds skip this step entirely and take under a minute.
 
 ### Port 8080 is already in use
 
-Find and stop whatever is using port 8080:
+Find and stop the conflicting process:
 ```bash
 # macOS / Linux
-lsof -i :8080
+lsof -i :8080 | grep LISTEN
 kill -9 <PID>
 ```
 
-Alternatively, change the Spring Boot port in `application.properties`:
+Or change the application port. In `application.properties`, add:
 ```properties
 server.port=9090
 ```
-Then update `API_BASE` in `src/main/resources/static/index.html` to match:
+Then update `API_BASE` in `src/main/resources/static/index.html`:
 ```javascript
 const API_BASE = 'http://localhost:9090';
+```
+And update the port mapping in `docker-compose.yml`:
+```yaml
+ports:
+  - "9090:9090"
 ```
 
 ### Browser shows a blank white page
 
-The React UI uses Babel Standalone to compile JSX at runtime in the browser. If there is a JavaScript error, the page may render blank. Open the browser developer console (`F12` → Console tab) to see the error message.
-
-A hard refresh clears the browser cache and re-fetches the latest HTML:
+Open the browser developer console (F12 → Console). If a JavaScript error is visible, do a hard refresh to clear the cache:
 - macOS: `Cmd + Shift + R`
 - Windows / Linux: `Ctrl + Shift + R`
 
 ---
 
-## Infrastructure Note on Version Pinning
+## A Note on Version Pinning
 
-The `docker-compose.yml` pins ChromaDB to `0.4.24` and the `pom.xml` pins LangChain4j to `0.36.2`. These two version numbers are coupled — the LangChain4j Chroma integration at `0.36.2` uses the `/api/v1/` HTTP endpoint format, which ChromaDB dropped in later releases. Updating either dependency without updating the other will break the vector store integration with a `405 Method Not Allowed` error. Any future upgrade requires testing both together.
+`docker-compose.yml` pins ChromaDB to `0.4.24` and `pom.xml` pins LangChain4j to `0.36.2`. These two versions are tightly coupled — LangChain4j at `0.36.2` constructs ChromaDB API calls using the `/api/v1/` URL prefix, which ChromaDB removed in versions `0.5.x` and later. Updating either dependency without a coordinated update of the other will break vector storage with a `405 Method Not Allowed` error at runtime, not at compile time.

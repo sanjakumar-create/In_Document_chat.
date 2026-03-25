@@ -1,16 +1,68 @@
 version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The Vault — Full Stack
+#
+# Three services:
+#   chromadb  — vector database (pinned to 0.4.24, see README for why)
+#   app       — Spring Boot backend + React UI
+#
+# Ollama (the AI model runtime) runs NATIVELY on the host machine — not inside
+# Docker. This allows it to use your GPU (NVIDIA, AMD, or Apple Metal) for fast
+# inference. The app service reaches it via host.docker.internal:11434.
+#
+# Usage:
+#   make setup    (first time — also pulls AI models)
+#   make run      (subsequent starts)
+#   make stop     (stop without deleting data)
+#   make clean    (stop and delete all data)
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
+
   chromadb:
     image: chromadb/chroma:0.4.24
-    container_name: local-chromadb
+    container_name: vault-chromadb
     ports:
-      - "8888:8000"  # Corrected: Mac 8888 -> Container 8000
+      - "8888:8000"
     volumes:
       - chroma-data:/chroma/chroma
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vault-app:latest
+    container_name: vault-app
+    ports:
+      - "8080:8080"
+    environment:
+      # Ollama runs on the host, not in Docker.
+      # host.docker.internal resolves to the host machine on macOS and Windows
+      # automatically. On Linux the extra_hosts entry below makes it work too.
+      - LANGCHAIN4J_OLLAMA_CHAT_MODEL_BASE_URL=http://host.docker.internal:11434
+      - LANGCHAIN4J_OLLAMA_EMBEDDING_MODEL_BASE_URL=http://host.docker.internal:11434
+      # ChromaDB is a sibling container — use its service name + internal port.
+      # Inside Docker the service is on port 8000, not the host-mapped 8888.
+      - CHROMA_BASE_URL=http://chromadb:8000
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    extra_hosts:
+      # Makes host.docker.internal resolve correctly on Linux hosts
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 volumes:
   chroma-data:
+    name: vault-chroma-data

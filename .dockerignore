@@ -1,0 +1,12 @@
+target/
+.git/
+.gitignore
+.idea/
+*.iml
+*.md
+CLAUDE.md
+src/frontend/
+*.png
+*.jpg
+*.jpeg
+*.gif
