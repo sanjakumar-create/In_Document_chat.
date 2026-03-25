@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>The Vault | Sovereign Intelligence</title>
+
+    <!-- Scripts -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/history@5/umd/history.development.js"></script>
+    <script src="https://unpkg.com/react-router@6.3.0/umd/react-router.development.js"></script>
+    <script src="https://unpkg.com/react-router-dom@6.3.0/umd/react-router-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+    <!-- Fonts & Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "error": "#ffb4ab",
+                        "primary": "#c0c1ff",
+                        "secondary": "#b9c8de",
+                        "tertiary-container": "#7c87f3",
+                        "on-primary-fixed": "#07006c",
+                        "outline": "#908fa0",
+                        "surface-dim": "#0b1326",
+                        "surface": "#0b1326",
+                        "background": "#0b1326",
+                        "primary-container": "#8083ff",
+                        "surface-container": "#171f33",
+                        "on-tertiary-container": "#081486",
+                        "secondary-fixed-dim": "#b9c8de",
+                        "surface-container-lowest": "#060e20",
+                        "on-primary-container": "#0d0096",
+                        "surface-variant": "#2d3449",
+                        "tertiary-fixed-dim": "#bdc2ff",
+                        "tertiary": "#bdc2ff",
+                        "on-error": "#690005",
+                        "inverse-surface": "#dae2fd",
+                        "on-tertiary-fixed-variant": "#2f3aa3",
+                        "on-tertiary-fixed": "#000767",
+                        "secondary-fixed": "#d4e4fa",
+                        "surface-container-highest": "#2d3449",
+                        "secondary-container": "#39485a",
+                        "on-secondary-container": "#a7b6cc",
+                        "on-primary": "#1000a9",
+                        "primary-fixed-dim": "#c0c1ff",
+                        "on-surface-variant": "#c7c4d7",
+                        "outline-variant": "#464554",
+                        "on-secondary-fixed-variant": "#39485a",
+                        "on-tertiary": "#131e8c",
+                        "surface-tint": "#c0c1ff",
+                        "surface-container-high": "#222a3d",
+                        "on-surface": "#dae2fd",
+                        "primary-fixed": "#e1e0ff",
+                        "surface-bright": "#31394d",
+                        "tertiary-fixed": "#e0e0ff",
+                        "on-secondary": "#233143",
+                        "on-secondary-fixed": "#0d1c2d",
+                        "inverse-primary": "#494bd6",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-low": "#131b2e",
+                        "error-container": "#93000a",
+                        "on-background": "#dae2fd",
+                        "on-primary-fixed-variant": "#2f2ebe",
+                        "inverse-on-surface": "#283044"
+                    },
+                    fontFamily: {
+                        "headline": ["Inter"], "body": ["Inter"],
+                        "label": ["Inter"], "inter": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #2d3449; border-radius: 10px; }
+        .pulse-soft { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .lithographic-glow { background: linear-gradient(45deg, #c0c1ff, #8083ff); box-shadow: 0 0 20px rgba(192, 193, 255, 0.2); }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; background: #c0c1ff; border-radius: 50%; cursor: pointer; }
+        .dot-bounce { animation: bounce 1s infinite; }
+        @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+    </style>
+</head>
+<body class="bg-background text-on-surface antialiased overflow-hidden selection:bg-primary/30 selection:text-primary">
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+    const { createRoot } = ReactDOM;
+    const { MemoryRouter, Routes, Route, Link, useNavigate, useLocation } = ReactRouterDOM;
+
+    // ─── Constants ──────────────────────────────────────────────────────────────
+    const API_BASE = 'http://localhost:8080';
+    const LS_DOCS  = 'vault_docs_v2';
+    const LS_CONVS = 'vault_convs_v2';
+    const LS_SETTINGS = 'vault_settings_v2';
+
+    const DEFAULT_SETTINGS = {
+        similarityThreshold: 0.70,
+        maxResults: 5,
+        offlineFirst: true
+    };
+
+    // ─── Utilities ───────────────────────────────────────────────────────────────
+    const formatSize = (bytes) => {
+        if (!bytes) return '—';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const formatDate = (iso) => {
+        if (!iso) return '—';
+        return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    };
+
+    const getFileIcon = (name = '') => {
+        const n = name.toLowerCase();
+        if (n.endsWith('.pdf'))                  return { icon: 'picture_as_pdf', color: 'text-red-400',   bg: 'bg-red-900/20' };
+        if (n.match(/\.(docx?|doc)$/))           return { icon: 'description',    color: 'text-blue-400',  bg: 'bg-blue-900/20' };
+        if (n.match(/\.(xlsx?|xls|csv)$/))       return { icon: 'table_chart',    color: 'text-green-400', bg: 'bg-green-900/20' };
+        return                                          { icon: 'article',         color: 'text-slate-400', bg: 'bg-slate-900/20' };
+    };
+
+    // ─── API Service ─────────────────────────────────────────────────────────────
+    const VaultAPI = {
+        async uploadFile(file) {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(`${API_BASE}/api/documents/upload`, { method: 'POST', body: fd });
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            return res.text();
+        },
+
+        async askQuestion(question, settings) {
+            const params = new URLSearchParams({
+                question,
+                minScore:   settings.similarityThreshold,
+                maxResults: settings.maxResults
+            });
+            const res = await fetch(`${API_BASE}/api/chat/ask?${params}`);
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            return res.json();
+        },
+
+        async clearHistory() {
+            const res = await fetch(`${API_BASE}/api/chat/clear`, { method: 'POST' });
+            return res.text();
+        },
+
+        async checkStatus() {
+            try {
+                const controller = new AbortController();
+                setTimeout(() => controller.abort(), 4000);
+                const res = await fetch(`${API_BASE}/api/status`, { signal: controller.signal });
+                if (res.ok) return res.json();
+                return null;
+            } catch { return null; }
+        }
+    };
+
+    // ─── Hooks ───────────────────────────────────────────────────────────────────
+    function useLocalStorage(key, def) {
+        const [state, setState] = useState(() => {
+            try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; }
+            catch { return def; }
+        });
+        const set = useCallback((val) => {
+            setState(prev => {
+                const next = typeof val === 'function' ? val(prev) : val;
+                try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+                return next;
+            });
+        }, [key]);
+        return [state, set];
+    }
+
+    // ─── Micro-components ────────────────────────────────────────────────────────
+    const Icon = ({ name, className = '', fill = false }) => (
+        <span className={`material-symbols-outlined ${className}`}
+              style={fill ? { fontVariationSettings: "'FILL' 1" } : {}}>
+            {name}
+        </span>
+    );
+
+    const Toast = ({ message, type, onClose }) => {
+        useEffect(() => { const t = setTimeout(onClose, 4500); return () => clearTimeout(t); }, []);
+        const ok = type === 'success';
+        return (
+            <div className={`fixed bottom-6 right-6 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-xl ${
+                ok ? 'bg-green-900/90 border-green-500/30 text-green-300' : 'bg-red-900/90 border-red-500/30 text-red-300'
+            }`}>
+                <Icon name={ok ? 'check_circle' : 'error'} className="text-sm" fill />
+                <p className="text-xs font-medium max-w-xs">{message}</p>
+                <button onClick={onClose}><Icon name="close" className="text-sm opacity-60 hover:opacity-100" /></button>
+            </div>
+        );
+    };
+
+    const Topbar = ({ title }) => (
+        <header className="fixed top-0 right-0 h-16 bg-[#0b1326]/90 backdrop-blur-xl z-40 flex items-center px-8 border-b border-outline-variant/10 shadow-lg"
+                style={{ left: '16rem' }}>
+            <h2 className="font-bold tracking-tight text-[#c0c1ff] text-base">{title}</h2>
+        </header>
+    );
+
+    // ─── Sidebar ─────────────────────────────────────────────────────────────────
+    const Sidebar = ({ backendOnline }) => {
+        const location = useLocation();
+        const navItems = [
+            { path: '/',         icon: 'dashboard_customize', label: 'Workspace' },
+            { path: '/library',  icon: 'book_5',              label: 'Library'   },
+            { path: '/history',  icon: 'history',             label: 'History'   },
+            { path: '/settings', icon: 'settings',            label: 'Settings'  },
+        ];
+        return (
+            <aside className="fixed left-0 top-0 h-screen w-64 bg-[#131b2e] flex flex-col py-6 z-50 border-r border-outline-variant/10">
+                <div className="px-6 mb-8">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-xl bg-primary-container flex items-center justify-center">
+                            <Icon name="security" className="text-on-primary-container" fill />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold tracking-tighter text-indigo-400">The Vault</h1>
+                            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Sovereign Intel</p>
+                        </div>
+                    </div>
+                    <Link to="/">
+                        <button className="w-full lithographic-glow text-on-primary py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:scale-[0.98] transition-all duration-150 text-sm">
+                            <Icon name="add" className="text-sm" /> New Analysis
+                        </button>
+                    </Link>
+                </div>
+                <nav className="flex-1 space-y-1">
+                    {navItems.map(item => {
+                        const active = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
+                        return (
+                            <Link key={item.path} to={item.path}
+                                  className={`flex items-center px-4 py-3 mx-4 rounded-lg transition-all duration-200 gap-3 text-sm ${
+                                      active ? 'text-indigo-400 bg-[#171f33] border-l-4 border-indigo-500 font-semibold'
+                                             : 'text-slate-400 hover:text-slate-200 hover:bg-[#171f33]'
+                                  }`}>
+                                <Icon name={item.icon} fill={active} />{item.label}
+                            </Link>
+                        );
+                    })}
+                </nav>
+                <div className="px-6 mt-4">
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${backendOnline ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
+                        <div className={`w-2 h-2 rounded-full ${backendOnline ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`}></div>
+                        <span className="text-[10px] font-medium text-on-surface-variant">
+                            {backendOnline ? 'Backend Connected' : 'Backend Offline'}
+                        </span>
+                    </div>
+                </div>
+            </aside>
+        );
+    };
+
+    // ─── Workspace Screen ─────────────────────────────────────────────────────────
+    const WorkspaceScreen = ({ documents, setDocuments, conversations, setConversations, settings }) => {
+        const [messages, setMessages]         = useState([]);
+        const [input, setInput]               = useState('');
+        const [isLoading, setIsLoading]       = useState(false);
+        const [isDragOver, setIsDragOver]     = useState(false);
+        const [isUploading, setIsUploading]   = useState(false);
+        const [toast, setToast]               = useState(null);
+        const [expandedCites, setExpandedCites] = useState({});
+        const [currentConvId, setCurrentConvId] = useState(null);
+        const messagesEndRef = useRef(null);
+        const fileInputRef   = useRef(null);
+        const textareaRef    = useRef(null);
+
+        useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isLoading]);
+
+        const showToast = (message, type) => setToast({ message, type });
+
+        const uploadFile = async (file) => {
+            setIsUploading(true);
+            try {
+                await VaultAPI.uploadFile(file);
+                const doc = { id: Date.now().toString(), name: file.name, size: file.size, type: file.type, uploadedAt: new Date().toISOString() };
+                setDocuments(prev => [doc, ...prev]);
+                showToast(`"${file.name}" ingested successfully`, 'success');
+            } catch (err) {
+                showToast(`Failed to ingest "${file.name}": ${err.message}`, 'error');
+            } finally {
+                setIsUploading(false);
+            }
+        };
+
+        const handleDrop = (e) => {
+            e.preventDefault(); setIsDragOver(false);
+            Array.from(e.dataTransfer.files).forEach(uploadFile);
+        };
+
+        const handleFileSelect = (e) => {
+            Array.from(e.target.files).forEach(uploadFile);
+            e.target.value = '';
+        };
+
+        const clearChat = async () => {
+            setMessages([]); setCurrentConvId(null); setExpandedCites({});
+            try { await VaultAPI.clearHistory(); } catch {}
+        };
+
+        const sendMessage = async () => {
+            if (!input.trim() || isLoading) return;
+            const question = input.trim();
+            setInput('');
+            if (textareaRef.current) { textareaRef.current.style.height = 'auto'; }
+
+            const userMsg = { role: 'user', content: question, id: Date.now() };
+            setMessages(prev => [...prev, userMsg]);
+            setIsLoading(true);
+
+            try {
+                const response = await VaultAPI.askQuestion(question, settings);
+                const aiMsg = { role: 'ai', content: response.answer, citations: response.citations || [], id: Date.now() + 1 };
+                setMessages(prev => {
+                    const updated = [...prev, aiMsg];
+
+                    // Persist to conversation history
+                    if (!currentConvId) {
+                        const newId = Date.now().toString();
+                        setCurrentConvId(newId);
+                        setConversations(p => [{
+                            id: newId, title: question, messages: updated,
+                            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+                        }, ...p]);
+                    } else {
+                        setConversations(p => p.map(c =>
+                            c.id === currentConvId ? { ...c, messages: updated, updatedAt: new Date().toISOString() } : c
+                        ));
+                    }
+                    return updated;
+                });
+            } catch (err) {
+                setMessages(prev => [...prev, {
+                    role: 'ai', content: `Connection error: ${err.message}. Make sure the backend is running at ${API_BASE}.`,
+                    citations: [], id: Date.now() + 1, isError: true
+                }]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+        };
+
+        const suggestions = [
+            "What are the key findings?", "Summarize the main points",
+            "What risks are identified?", "What are the recommendations?"
+        ];
+
+        return (
+            <div className="ml-64 h-screen flex flex-col overflow-hidden">
+                {/* Header */}
+                <header className="fixed top-0 z-40 flex items-center justify-between px-6 h-16 border-b border-outline-variant/10 bg-[#0b1326]"
+                        style={{ left: '16rem', right: 0 }}>
+                    <span className="text-sm font-bold text-[#c0c1ff]">
+                        {documents.length > 0 ? `${documents.length} document${documents.length !== 1 ? 's' : ''} in knowledge base` : 'Workspace — upload a document to begin'}
+                    </span>
+                    {messages.length > 0 && (
+                        <button onClick={clearChat}
+                                className="text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1.5 transition-colors px-3 py-1.5 rounded-lg hover:bg-[#171f33]">
+                            <Icon name="refresh" className="text-sm" /> Clear Chat
+                        </button>
+                    )}
+                </header>
+
+                <main className="mt-16 flex-1 flex overflow-hidden">
+                    {/* LEFT: Knowledge Base */}
+                    <section className="w-[30%] bg-[#131b2e] flex flex-col border-r border-outline-variant/10 flex-shrink-0">
+                        <div className="p-5 flex flex-col h-full overflow-hidden">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-sm font-bold text-on-surface">Knowledge Base</h2>
+                                {documents.length > 0 && (
+                                    <button onClick={() => setDocuments([])} className="text-[10px] text-slate-600 hover:text-red-400 transition-colors">Clear All</button>
+                                )}
+                            </div>
+
+                            {/* Drop Zone */}
+                            <div onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                                 onDragLeave={() => setIsDragOver(false)}
+                                 onDrop={handleDrop}
+                                 onClick={() => !isUploading && fileInputRef.current?.click()}
+                                 className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center text-center transition-all cursor-pointer mb-4 ${
+                                     isDragOver   ? 'border-primary bg-primary/10 scale-[0.99]'
+                                     : isUploading ? 'border-amber-500/40 bg-amber-500/5 cursor-wait'
+                                                  : 'border-outline-variant/30 bg-[#171f33]/50 hover:bg-[#171f33] hover:border-primary/40'
+                                 }`}>
+                                <input ref={fileInputRef} type="file" className="hidden" multiple
+                                       accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,.pptx"
+                                       onChange={handleFileSelect} />
+                                {isUploading ? (
+                                    <>
+                                        <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center mb-2 animate-pulse">
+                                            <Icon name="upload" className="text-amber-400" />
+                                        </div>
+                                        <p className="text-xs font-medium text-amber-400">Ingesting & vectorizing…</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">This may take 30–60 s</p>
+                                    </>
+                                ) : isDragOver ? (
+                                    <>
+                                        <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mb-2">
+                                            <Icon name="file_download" className="text-primary" />
+                                        </div>
+                                        <p className="text-xs font-medium text-primary">Drop to ingest</p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="w-10 h-10 rounded-full bg-secondary-container/30 flex items-center justify-center mb-2">
+                                            <Icon name="upload_file" className="text-primary" />
+                                        </div>
+                                        <p className="text-xs font-medium text-on-surface">Drop files or click to browse</p>
+                                        <p className="text-[10px] text-on-surface-variant mt-1">PDF, DOCX, TXT, CSV, XLSX</p>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Document List */}
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                {documents.length === 0 ? (
+                                    <div className="text-center py-6">
+                                        <Icon name="inbox" className="text-slate-700 text-4xl" />
+                                        <p className="text-[11px] text-slate-600 mt-2">No documents yet</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <p className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-3">
+                                            Ingested ({documents.length})
+                                        </p>
+                                        <div className="space-y-2">
+                                            {documents.map(doc => {
+                                                const { icon, color, bg } = getFileIcon(doc.name);
+                                                return (
+                                                    <div key={doc.id} className="p-3 bg-[#171f33] rounded-xl flex items-center gap-3 group hover:bg-[#1d2640] transition-colors">
+                                                        <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center flex-shrink-0`}>
+                                                            <Icon name={icon} className={`${color} text-sm`} />
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-[11px] font-semibold text-on-surface truncate">{doc.name}</p>
+                                                            <p className="text-[10px] text-on-surface-variant">{formatSize(doc.size)}</p>
+                                                        </div>
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                                            <Icon name="check_circle" className="text-green-400 text-sm" fill />
+                                                            <button onClick={() => setDocuments(prev => prev.filter(d => d.id !== doc.id))}
+                                                                    className="text-slate-600 hover:text-red-400 transition-colors ml-1">
+                                                                <Icon name="delete" className="text-sm" />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Status */}
+                            <div className="mt-4 pt-4 border-t border-outline-variant/10">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+                                    <span className="text-[10px] font-medium text-on-surface-variant">100% Local • No cloud</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* RIGHT: Chat */}
+                    <section className="flex-1 bg-[#0b1326] flex flex-col overflow-hidden">
+                        {/* Messages */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-8 space-y-6">
+                            {messages.length === 0 && !isLoading && (
+                                <div className="h-full flex flex-col items-center justify-center text-center min-h-[400px]">
+                                    <div className="w-16 h-16 rounded-2xl bg-primary-container/20 flex items-center justify-center mb-4">
+                                        <Icon name="auto_awesome" className="text-primary text-3xl" fill />
+                                    </div>
+                                    <h3 className="text-xl font-bold text-on-surface mb-2">Sovereign Intelligence Ready</h3>
+                                    <p className="text-sm text-on-surface-variant max-w-sm mb-8 leading-relaxed">
+                                        Upload a document to your Knowledge Base, then ask anything about it.<br/>
+                                        The CRAG engine will verify every source before answering.
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-3 max-w-md w-full">
+                                        {suggestions.map(q => (
+                                            <button key={q} onClick={() => setInput(q)}
+                                                    className="px-4 py-3 bg-[#171f33] hover:bg-[#222a3d] rounded-xl text-xs text-left text-on-surface-variant hover:text-on-surface transition-all border border-outline-variant/10">
+                                                {q}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {messages.map(msg => (
+                                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'flex-col gap-2'}`}>
+                                    {msg.role === 'user' ? (
+                                        <div className="max-w-[75%] bg-[#222a3d] p-4 rounded-2xl rounded-tr-none border border-outline-variant/10">
+                                            <p className="text-sm text-on-surface leading-relaxed">{msg.content}</p>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <div className="w-6 h-6 rounded bg-primary-container/20 flex items-center justify-center flex-shrink-0">
+                                                    <Icon name="auto_awesome" className="text-primary text-xs" fill />
+                                                </div>
+                                                <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Sovereign Intelligence</span>
+                                                {msg.citations && msg.citations.length > 0 && (
+                                                    <span className="text-[9px] bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">
+                                                        {msg.citations.length} verified source{msg.citations.length !== 1 ? 's' : ''}
+                                                    </span>
+                                                )}
+                                                {msg.citations && msg.citations.length === 0 && !msg.isError && (
+                                                    <span className="text-[9px] bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide">
+                                                        No matching sources
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className={`max-w-[90%] rounded-2xl rounded-tl-none p-5 border-l-4 ${
+                                                msg.isError ? 'bg-red-900/20 border-red-500/40' : 'bg-[#171f33] border-tertiary'
+                                            }`}>
+                                                <p className="text-sm text-on-surface leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+
+                                                {msg.citations && msg.citations.length > 0 && (
+                                                    <div className="mt-4 pt-4 border-t border-outline-variant/10">
+                                                        <button onClick={() => setExpandedCites(p => ({ ...p, [msg.id]: !p[msg.id] }))}
+                                                                className="flex items-center gap-1.5 text-[11px] text-primary hover:text-primary/80 font-semibold transition-colors">
+                                                            <Icon name={expandedCites[msg.id] ? 'expand_less' : 'expand_more'} className="text-sm" />
+                                                            {expandedCites[msg.id] ? 'Hide' : 'Show'} Sources ({msg.citations.length})
+                                                        </button>
+                                                        {expandedCites[msg.id] && (
+                                                            <div className="mt-3 space-y-2">
+                                                                {msg.citations.map((cite, i) => (
+                                                                    <div key={i} className="p-3 bg-[#0b1326]/60 rounded-lg border border-outline-variant/10">
+                                                                        <div className="flex items-center gap-1 mb-1">
+                                                                            <Icon name="format_quote" className="text-tertiary text-xs" />
+                                                                            <span className="text-[9px] text-tertiary font-bold uppercase tracking-widest">Source {i + 1}</span>
+                                                                        </div>
+                                                                        <p className="text-[11px] text-on-surface-variant leading-relaxed">{cite}</p>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+
+                            {isLoading && (
+                                <div className="flex flex-col gap-2">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded bg-primary-container/20 flex items-center justify-center">
+                                            <Icon name="auto_awesome" className="text-primary text-xs pulse-soft" fill />
+                                        </div>
+                                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest">CRAG evaluating sources…</span>
+                                    </div>
+                                    <div className="bg-[#171f33] rounded-2xl rounded-tl-none p-5 max-w-[55%]">
+                                        <div className="flex items-center gap-3">
+                                            <div className="flex gap-1">
+                                                {[0, 150, 300].map(d => (
+                                                    <div key={d} className="w-2 h-2 bg-primary/60 rounded-full dot-bounce" style={{ animationDelay: `${d}ms` }}></div>
+                                                ))}
+                                            </div>
+                                            <span className="text-xs text-on-surface-variant">Grading retrieved chunks for accuracy…</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                            <div ref={messagesEndRef} />
+                        </div>
+
+                        {/* Input Bar */}
+                        <div className="p-5 border-t border-outline-variant/10 bg-[#0b1326]">
+                            <div className="flex flex-col gap-2">
+                                <div className="relative">
+                                    <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)}
+                                              onKeyDown={handleKeyDown} disabled={isLoading}
+                                              placeholder="Ask anything about your documents… (Enter to send, Shift+Enter for newline)"
+                                              rows={1}
+                                              className="w-full bg-[#171f33] border border-outline-variant/20 rounded-2xl py-4 pl-5 pr-14 text-sm text-on-surface focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all placeholder-slate-600 resize-none overflow-hidden disabled:opacity-60"
+                                              style={{ minHeight: '52px', maxHeight: '140px' }}
+                                              onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 140) + 'px'; }} />
+                                    <button onClick={sendMessage} disabled={!input.trim() || isLoading}
+                                            className="absolute right-3 top-2.5 w-10 h-10 bg-primary-container text-on-primary-container rounded-xl flex items-center justify-center hover:bg-primary transition-all active:scale-90 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed">
+                                        <Icon name={isLoading ? 'hourglass_empty' : 'send'} className="text-sm" />
+                                    </button>
+                                </div>
+                                <div className="flex items-center justify-center gap-2">
+                                    <Icon name="lock" className="text-emerald-400 text-[13px]" fill />
+                                    <p className="text-[10px] text-slate-600 font-medium">100% local processing · No data leaves your machine · Zero hallucinations via CRAG</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </main>
+
+                {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+            </div>
+        );
+    };
+
+    // ─── Library Screen ───────────────────────────────────────────────────────────
+    const LibraryScreen = ({ documents, setDocuments, conversations }) => {
+        const navigate = useNavigate();
+        const recentConvs = conversations.slice(0, 5);
+
+        return (
+            <div className="h-screen flex flex-col overflow-hidden bg-background">
+                <Topbar title="Library" />
+                <main className="ml-64 mt-16 p-8 flex gap-8 overflow-y-auto custom-scrollbar h-[calc(100vh-64px)]">
+                    <section className="flex-1">
+                        <div className="mb-6">
+                            <p className="text-[10px] uppercase tracking-widest text-on-surface-variant font-semibold mb-1">Knowledge Repositories</p>
+                            <h3 className="text-2xl font-bold tracking-tight">Active Archives</h3>
+                        </div>
+                        {documents.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-64 text-center">
+                                <Icon name="folder_open" className="text-slate-700 text-5xl mb-3" />
+                                <p className="text-slate-500 text-sm">No documents ingested yet.</p>
+                                <p className="text-slate-600 text-xs mt-1">Go to Workspace and upload a file to get started.</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-5 pb-12">
+                                {documents.map(doc => {
+                                    const { icon, color, bg } = getFileIcon(doc.name);
+                                    return (
+                                        <div key={doc.id} className="group bg-[#171f33] p-5 rounded-xl border border-transparent hover:border-indigo-500/20 transition-all duration-300 relative overflow-hidden">
+                                            <div className="absolute top-0 left-0 w-1 h-full bg-tertiary"></div>
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className={`w-12 h-12 rounded-lg ${bg} flex items-center justify-center group-hover:scale-105 transition-transform`}>
+                                                    <Icon name={icon} className={`${color} text-2xl`} />
+                                                </div>
+                                                <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 text-green-400 text-[10px] font-bold uppercase tracking-tighter">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>Verified
+                                                </div>
+                                            </div>
+                                            <h4 className="font-bold text-sm mb-1 leading-snug truncate">{doc.name}</h4>
+                                            <p className="text-xs text-slate-500 mb-1">{formatSize(doc.size)}</p>
+                                            <p className="text-[10px] text-slate-600 mb-4">{formatDate(doc.uploadedAt)}</p>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => navigate('/')}
+                                                        className="flex-1 text-xs py-2 bg-primary-container/20 hover:bg-primary-container/40 text-primary rounded-lg transition-colors font-semibold flex items-center justify-center gap-1">
+                                                    <Icon name="chat" className="text-sm" /> Chat
+                                                </button>
+                                                <button onClick={() => setDocuments(prev => prev.filter(d => d.id !== doc.id))}
+                                                        className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors">
+                                                    <Icon name="delete" className="text-sm" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </section>
+
+                    <section className="w-72 flex flex-col flex-shrink-0">
+                        <div className="mb-5">
+                            <p className="text-[10px] uppercase tracking-widest text-on-surface-variant font-semibold mb-1">Interaction Log</p>
+                            <h3 className="text-lg font-bold tracking-tight">Recent Threads</h3>
+                        </div>
+                        {recentConvs.length === 0 ? (
+                            <p className="text-xs text-slate-600">No conversations yet.</p>
+                        ) : (
+                            <div className="space-y-3">
+                                {recentConvs.map(conv => (
+                                    <div key={conv.id} className="p-4 rounded-xl bg-[#131b2e] border-l-2 border-primary hover:bg-[#171f33] transition-colors cursor-pointer"
+                                         onClick={() => navigate('/history')}>
+                                        <p className="text-[10px] font-mono text-slate-500 mb-1">{formatDate(conv.updatedAt)}</p>
+                                        <h5 className="font-semibold text-xs text-slate-200 mb-1 truncate">{conv.title}</h5>
+                                        <p className="text-[10px] text-slate-500">{conv.messages.length / 2} exchange{conv.messages.length / 2 !== 1 ? 's' : ''}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </section>
+                </main>
+            </div>
+        );
+    };
+
+    // ─── History Screen ───────────────────────────────────────────────────────────
+    const HistoryScreen = ({ conversations, setConversations }) => {
+        const [selected, setSelected] = useState(null);
+
+        const selectedConv = conversations.find(c => c.id === selected);
+
+        return (
+            <div className="h-screen flex flex-col overflow-hidden bg-background">
+                <Topbar title="Conversation History" />
+                <main className="ml-64 mt-16 flex h-[calc(100vh-64px)] overflow-hidden">
+                    {/* List */}
+                    <aside className="w-80 flex-shrink-0 border-r border-outline-variant/10 bg-[#131b2e] overflow-y-auto custom-scrollbar p-5">
+                        <div className="flex items-center justify-between mb-5">
+                            <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">{conversations.length} Thread{conversations.length !== 1 ? 's' : ''}</p>
+                            {conversations.length > 0 && (
+                                <button onClick={() => { setConversations([]); setSelected(null); }}
+                                        className="text-[10px] text-red-500/60 hover:text-red-400 transition-colors">Clear All</button>
+                            )}
+                        </div>
+                        {conversations.length === 0 ? (
+                            <div className="text-center py-12">
+                                <Icon name="history" className="text-slate-700 text-4xl" />
+                                <p className="text-xs text-slate-600 mt-2">No history yet</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                {conversations.map(conv => (
+                                    <div key={conv.id}
+                                         onClick={() => setSelected(conv.id)}
+                                         className={`p-4 rounded-xl cursor-pointer transition-all border ${
+                                             selected === conv.id ? 'bg-[#1d2640] border-indigo-500/30' : 'bg-[#171f33] border-transparent hover:border-outline-variant/20'
+                                         }`}>
+                                        <p className="text-[10px] text-slate-500 mb-1">{formatDate(conv.createdAt)}</p>
+                                        <h5 className="text-xs font-semibold text-on-surface truncate mb-1">{conv.title}</h5>
+                                        <div className="flex items-center justify-between">
+                                            <p className="text-[10px] text-slate-600">{Math.floor(conv.messages.length / 2)} Q&A pair{Math.floor(conv.messages.length / 2) !== 1 ? 's' : ''}</p>
+                                            <button onClick={e => { e.stopPropagation(); setConversations(p => p.filter(c => c.id !== conv.id)); if (selected === conv.id) setSelected(null); }}
+                                                    className="text-slate-700 hover:text-red-400 transition-colors">
+                                                <Icon name="delete" className="text-sm" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </aside>
+
+                    {/* Detail */}
+                    <section className="flex-1 overflow-y-auto custom-scrollbar p-8">
+                        {!selectedConv ? (
+                            <div className="h-full flex items-center justify-center text-center">
+                                <div>
+                                    <Icon name="chat_bubble_outline" className="text-slate-700 text-5xl mb-3" />
+                                    <p className="text-slate-500 text-sm">Select a conversation to review</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="max-w-3xl">
+                                <div className="mb-6">
+                                    <p className="text-[10px] text-slate-500 mb-1">{formatDate(selectedConv.createdAt)}</p>
+                                    <h3 className="text-lg font-bold text-on-surface">{selectedConv.title}</h3>
+                                </div>
+                                <div className="space-y-5">
+                                    {selectedConv.messages.map((msg, i) => (
+                                        <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'flex-col gap-1'}`}>
+                                            {msg.role === 'user' ? (
+                                                <div className="max-w-[70%] bg-[#222a3d] p-4 rounded-2xl rounded-tr-none border border-outline-variant/10">
+                                                    <p className="text-sm text-on-surface leading-relaxed">{msg.content}</p>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <Icon name="auto_awesome" className="text-primary text-sm" fill />
+                                                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Sovereign Intelligence</span>
+                                                        {msg.citations && msg.citations.length > 0 && (
+                                                            <span className="text-[9px] bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full font-bold">
+                                                                {msg.citations.length} source{msg.citations.length !== 1 ? 's' : ''}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="max-w-[90%] bg-[#171f33] rounded-2xl rounded-tl-none p-5 border-l-4 border-tertiary">
+                                                        <p className="text-sm text-on-surface leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </section>
+                </main>
+            </div>
+        );
+    };
+
+    // ─── Settings Screen ──────────────────────────────────────────────────────────
+    const SettingsScreen = ({ settings, setSettings, backendStatus }) => {
+        const [local, setLocal] = useState({ ...settings });
+        const [testing, setTesting]   = useState(false);
+        const [testResult, setTestResult] = useState(null);
+
+        const handleSave = () => {
+            setSettings(local);
+            setTestResult({ ok: true, msg: 'Settings saved successfully.' });
+            setTimeout(() => setTestResult(null), 3000);
+        };
+
+        const handleReset = () => {
+            setLocal({ ...DEFAULT_SETTINGS });
+        };
+
+        const handleTestConnection = async () => {
+            setTesting(true); setTestResult(null);
+            const status = await VaultAPI.checkStatus();
+            setTesting(false);
+            if (status) {
+                setTestResult({ ok: true, msg: `Connected ✓  Model: ${status.generationModel}  |  Embeddings: ${status.embeddingModel}` });
+            } else {
+                setTestResult({ ok: false, msg: 'Cannot reach backend at localhost:8080. Is the Spring Boot app running?' });
+            }
+        };
+
+        return (
+            <div className="h-screen flex flex-col overflow-hidden bg-background">
+                <Topbar title="Intelligence Settings" />
+                <main className="ml-64 mt-16 p-10 overflow-y-auto custom-scrollbar h-[calc(100vh-64px)] max-w-5xl">
+                    <div className="grid grid-cols-12 gap-10">
+
+                        {/* Left: Config */}
+                        <section className="col-span-12 lg:col-span-7 space-y-8">
+                            <div>
+                                <h3 className="text-2xl font-bold tracking-tight text-primary mb-1">Model Configuration</h3>
+                                <p className="text-on-surface-variant text-sm leading-relaxed">
+                                    Retrieval parameters sent with every chat request. Ollama & ChromaDB URLs are set in <code className="bg-[#171f33] px-1 py-0.5 rounded text-xs text-tertiary">application.properties</code>.
+                                </p>
+                            </div>
+
+                            {/* Connection Test */}
+                            <div className="p-6 bg-[#171f33] rounded-xl border-l-4 border-tertiary">
+                                <label className="block text-xs font-bold text-on-surface mb-3 uppercase tracking-wide">Backend Connection</label>
+                                <div className="flex items-center gap-3">
+                                    <div className="flex-1 flex items-center gap-2 bg-[#131b2e] border border-outline-variant/15 rounded-lg px-4 py-3">
+                                        <Icon name="dns" className="text-slate-500 text-sm" />
+                                        <span className="text-sm font-mono text-on-surface">http://localhost:8080</span>
+                                        <span className={`ml-auto flex items-center text-[10px] font-bold gap-1 ${backendStatus ? 'text-green-400' : 'text-red-400'}`}>
+                                            <Icon name={backendStatus ? 'check_circle' : 'error'} className="text-xs" fill />
+                                            {backendStatus ? 'ONLINE' : 'OFFLINE'}
+                                        </span>
+                                    </div>
+                                    <button onClick={handleTestConnection} disabled={testing}
+                                            className="px-4 py-3 bg-primary-container/20 hover:bg-primary-container/40 text-primary rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 flex items-center gap-2 flex-shrink-0">
+                                        <Icon name={testing ? 'hourglass_empty' : 'wifi_tethering'} className="text-sm" />
+                                        {testing ? 'Testing…' : 'Test'}
+                                    </button>
+                                </div>
+                                {testResult && (
+                                    <p className={`text-xs mt-3 px-3 py-2 rounded-lg ${testResult.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                        {testResult.msg}
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Retrieval Settings */}
+                            <div className="p-6 bg-[#171f33] rounded-xl">
+                                <h4 className="text-sm font-bold mb-6 flex items-center gap-2">
+                                    <Icon name="database" className="text-tertiary" /> Retrieval Settings
+                                </h4>
+                                <div className="space-y-8">
+                                    <div>
+                                        <div className="flex justify-between items-center mb-3">
+                                            <div>
+                                                <label className="text-sm font-semibold text-on-surface">Similarity Threshold</label>
+                                                <p className="text-[11px] text-on-surface-variant">Minimum cosine similarity for a chunk to be retrieved</p>
+                                            </div>
+                                            <span className="text-xs font-mono bg-secondary-container px-2 py-1 rounded text-on-secondary-container">
+                                                {local.similarityThreshold.toFixed(2)}
+                                            </span>
+                                        </div>
+                                        <input type="range" min="0.40" max="0.95" step="0.01"
+                                               value={local.similarityThreshold}
+                                               onChange={e => setLocal(p => ({ ...p, similarityThreshold: parseFloat(e.target.value) }))}
+                                               className="w-full h-1.5 bg-[#2d3449] rounded-lg appearance-none cursor-pointer" />
+                                        <div className="flex justify-between text-[10px] text-slate-600 mt-1">
+                                            <span>Broad (0.40)</span><span>Strict (0.95)</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="flex justify-between items-center mb-3">
+                                            <div>
+                                                <label className="text-sm font-semibold text-on-surface">Max Retrieved Chunks</label>
+                                                <p className="text-[11px] text-on-surface-variant">How many chunks to pull before CRAG evaluation</p>
+                                            </div>
+                                            <span className="text-xs font-mono bg-secondary-container px-2 py-1 rounded text-on-secondary-container">
+                                                {local.maxResults}
+                                            </span>
+                                        </div>
+                                        <input type="range" min="1" max="10" step="1"
+                                               value={local.maxResults}
+                                               onChange={e => setLocal(p => ({ ...p, maxResults: parseInt(e.target.value) }))}
+                                               className="w-full h-1.5 bg-[#2d3449] rounded-lg appearance-none cursor-pointer" />
+                                        <div className="flex justify-between text-[10px] text-slate-600 mt-1">
+                                            <span>1 (fastest)</span><span>10 (most thorough)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <button onClick={handleReset} className="flex-1 bg-[#222a3d] text-on-surface border border-outline-variant/20 py-3 rounded-xl font-semibold hover:bg-[#2d3449] transition-all text-sm">
+                                    Reset Defaults
+                                </button>
+                                <button onClick={handleSave} className="flex-1 lithographic-glow text-on-primary py-3 rounded-xl font-bold text-sm">
+                                    Save Changes
+                                </button>
+                            </div>
+                        </section>
+
+                        {/* Right: Security + Info */}
+                        <aside className="col-span-12 lg:col-span-5 space-y-5">
+                            <div className="p-6 bg-[#171f33] rounded-2xl">
+                                <h4 className="text-sm font-bold mb-5 flex items-center gap-2">
+                                    <Icon name="security" className="text-primary" fill /> Security & Privacy
+                                </h4>
+                                <div className="space-y-5">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold">Offline-First Retrieval</p>
+                                            <p className="text-[11px] text-on-surface-variant">All processing stays local</p>
+                                        </div>
+                                        <button onClick={() => setLocal(p => ({ ...p, offlineFirst: !p.offlineFirst }))}
+                                                className={`w-12 h-6 rounded-full relative transition-colors ${local.offlineFirst ? 'bg-primary' : 'bg-slate-700'}`}>
+                                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${local.offlineFirst ? 'right-1' : 'left-1'}`}></div>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="p-6 bg-[#171f33] rounded-2xl">
+                                <h4 className="text-sm font-bold mb-4 flex items-center gap-2">
+                                    <Icon name="info" className="text-secondary" /> Tech Stack
+                                </h4>
+                                <div className="space-y-2 text-xs text-slate-400">
+                                    {[
+                                        ['Generation Model', 'Llama 3 (Ollama)'],
+                                        ['Embedding Model', 'nomic-embed-text'],
+                                        ['Vector Database', 'ChromaDB 0.4.24'],
+                                        ['Framework', 'Spring Boot 4 + LangChain4j'],
+                                        ['Document Parser', 'Apache Tika'],
+                                    ].map(([k, v]) => (
+                                        <div key={k} className="flex justify-between">
+                                            <span className="text-slate-600">{k}</span>
+                                            <span className="font-mono text-tertiary">{v}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="p-6 bg-[#171f33] rounded-2xl">
+                                <h4 className="text-sm font-bold mb-4">CRAG Pipeline</h4>
+                                <div className="space-y-3">
+                                    {['Embed question → vector', 'Search ChromaDB for top chunks', 'Grade each chunk YES/NO', 'Reject hallucination-risk chunks', 'Synthesize from verified facts only'].map((step, i) => (
+                                        <div key={i} className="flex items-center gap-3">
+                                            <div className="w-5 h-5 rounded-full bg-primary-container/20 flex items-center justify-center flex-shrink-0">
+                                                <span className="text-[9px] font-bold text-primary">{i + 1}</span>
+                                            </div>
+                                            <p className="text-[11px] text-slate-400">{step}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </aside>
+                    </div>
+                </main>
+                <div className="fixed bottom-0 right-0 w-1/3 h-1/2 bg-indigo-500/5 blur-[120px] rounded-full -z-10 pointer-events-none"></div>
+            </div>
+        );
+    };
+
+    // ─── App Root ─────────────────────────────────────────────────────────────────
+    const App = () => {
+        const [documents,     setDocuments]     = useLocalStorage(LS_DOCS,     []);
+        const [conversations, setConversations] = useLocalStorage(LS_CONVS,    []);
+        const [settings,      setSettings]      = useLocalStorage(LS_SETTINGS, DEFAULT_SETTINGS);
+        const [backendOnline, setBackendOnline] = useState(false);
+
+        useEffect(() => {
+            const check = async () => {
+                const status = await VaultAPI.checkStatus();
+                setBackendOnline(!!status);
+            };
+            check();
+            const interval = setInterval(check, 30000);
+            return () => clearInterval(interval);
+        }, []);
+
+        return (
+            <div className="flex bg-background h-screen overflow-hidden">
+                <Sidebar backendOnline={backendOnline} />
+                <div className="flex-1 relative overflow-hidden">
+                    <Routes>
+                        <Route path="/" element={
+                            <WorkspaceScreen documents={documents} setDocuments={setDocuments}
+                                             conversations={conversations} setConversations={setConversations}
+                                             settings={settings} />
+                        } />
+                        <Route path="/library" element={
+                            <LibraryScreen documents={documents} setDocuments={setDocuments}
+                                           conversations={conversations} />
+                        } />
+                        <Route path="/history" element={
+                            <HistoryScreen conversations={conversations} setConversations={setConversations} />
+                        } />
+                        <Route path="/settings" element={
+                            <SettingsScreen settings={settings} setSettings={setSettings} backendStatus={backendOnline} />
+                        } />
+                    </Routes>
+                </div>
+            </div>
+        );
+    };
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<MemoryRouter><App /></MemoryRouter>);
+</script>
+</body>
+</html>
