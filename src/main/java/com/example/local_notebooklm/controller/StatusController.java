@@ -1,5 +1,6 @@
 package com.example.local_notebooklm.controller;
 
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -7,6 +8,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 @RestController
+@CrossOrigin(origins = "*") // <--- ADD THIS LINE TO FIX CORS!
 @RequestMapping("/api")
 public class StatusController {
 

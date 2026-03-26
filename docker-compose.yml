@@ -1,4 +1,4 @@
-version: '3.9'
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The Vault — Full Stack
@@ -31,12 +31,11 @@ services:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:8000/api/v1/heartbeat || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
-    restart: unless-stopped
+
 
   app:
     build:
@@ -56,8 +55,7 @@ services:
       # Inside Docker the service is on port 8000, not the host-mapped 8888.
       - CHROMA_BASE_URL=http://chromadb:8000
     depends_on:
-      chromadb:
-        condition: service_healthy
+      - chromadb
     extra_hosts:
       # Makes host.docker.internal resolve correctly on Linux hosts
       - "host.docker.internal:host-gateway"

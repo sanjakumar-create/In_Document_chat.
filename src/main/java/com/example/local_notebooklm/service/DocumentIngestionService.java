@@ -1,5 +1,6 @@
-package com.example.local_notebooklm.service;
 
+package com.example.local_notebooklm.service;
+import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentParser;
 import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
@@ -12,6 +13,8 @@ import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
+
+import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey;
 
 @Service
 public class DocumentIngestionService {
@@ -29,28 +32,34 @@ public class DocumentIngestionService {
      * Reads a file from your computer, chunks it, and saves it to the vector database.
      * @param filePath The absolute path to the file (e.g., "C:/docs/my_notes.pdf" or "/Users/name/docs/my_notes.pdf")
      */
-    public void ingestFile(Path filePath) {
-        System.out.println("Starting ingestion for: " + filePath.getFileName());
+// 1. Add "String originalFilename" to the parameters
+    public void ingestFile(Path filePath, String originalFilename) {
+        System.out.println("Starting ingestion for: " + originalFilename);
 
-        // 1. Initialize Apache Tika to parse the file (works for PDF, DOCX, TXT, etc.)
         DocumentParser parser = new ApacheTikaDocumentParser();
-
-        // 2. Load the document from your local file system
         Document document = FileSystemDocumentLoader.loadDocument(filePath, parser);
 
-        // 3. Build the Ingestor Pipeline
+        // 🔒 THE MAGIC FIX: Stamp it with the CLEAN name, not the temp file name!
+        document.metadata().put("source_file", originalFilename);
+
         EmbeddingStoreIngestor ingestor = EmbeddingStoreIngestor.builder()
-                // Split the text into chunks of 500 characters, with a 50-character overlap
-                .documentSplitter(DocumentSplitters.recursive(300, 60))
-                // Tell it to use Ollama to create the vector embeddings
+                .documentSplitter(DocumentSplitters.recursive(1000, 200))
                 .embeddingModel(embeddingModel)
-                // Tell it to save those embeddings into ChromaDB
                 .embeddingStore(embeddingStore)
                 .build();
 
-        // 4. Run the pipeline!
         ingestor.ingest(document);
+        System.out.println("Successfully vectorized and saved: " + originalFilename);
+    }
+    /**
+     * Deletes all vector chunks associated with a specific file name from ChromaDB.
+     */
+    public void deleteFile(String originalFilename) {
+        System.out.println("🗑️ Attempting to delete vectors for: " + originalFilename);
 
-        System.out.println("Successfully vectorized and saved: " + filePath.getFileName());
+        // Tells ChromaDB to delete everything where "source_file" matches the filename
+        embeddingStore.removeAll(metadataKey("source_file").isEqualTo(originalFilename));
+
+        System.out.println("✅ Successfully deleted all vectors for: " + originalFilename);
     }
 }

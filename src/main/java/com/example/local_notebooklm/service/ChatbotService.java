@@ -13,7 +13,7 @@ import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.springframework.stereotype.Service;
-
+import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,19 +41,19 @@ public class ChatbotService {
      * @param minScore   Minimum cosine similarity for a chunk to be retrieved (0.0–1.0).
      * @param maxResults Maximum number of chunks to pull from ChromaDB before evaluation.
      */
-    public ChatResponse askAdvancedQuestion(String question, double minScore, int maxResults) {
-        System.out.println("User asked: " + question);
+    public ChatResponse askAdvancedQuestion(String question, double minScore, int maxResults, String filename) {
+        System.out.println("User asked: " + question + " about file: " + filename);
 
         // 1. Embed the question into a vector
         dev.langchain4j.data.embedding.Embedding questionEmbedding = embeddingModel.embed(question).content();
 
-        // 2. Search ChromaDB for the most relevant chunks
+        // 2. Search ChromaDB for the most relevant chunks using the METADATA FILTER
         EmbeddingSearchRequest searchRequest = EmbeddingSearchRequest.builder()
                 .queryEmbedding(questionEmbedding)
                 .maxResults(maxResults)
                 .minScore(minScore)
+                .filter(metadataKey("source_file").isEqualTo(filename)) // 🔒 THE BOUNCER!
                 .build();
-
         EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(searchRequest);
         List<EmbeddingMatch<TextSegment>> rawChunks = searchResult.matches();
 
@@ -66,13 +66,15 @@ public class ChatbotService {
         for (EmbeddingMatch<TextSegment> match : rawChunks) {
             String chunkText = match.embedded().text();
 
+            // Inside ChatbotService.java
             String evalPrompt = """
-                    You are a strict grader. Does the following document contain information relevant to answering the question: '%s'?
-
-                    Document: %s
-
-                    Reply with EXACTLY 'YES' or 'NO'. Do not explain.
-                    """.formatted(question, chunkText);
+        You are an AI evaluator. Look at the following document snippet. 
+        Does this snippet contain ANY partial or complete information that would be helpful in answering the user's question: '%s'?
+        
+        Document Snippet: %s
+        
+        If it contains useful facts, reply EXACTLY with 'YES'. If it is completely irrelevant, reply EXACTLY with 'NO'. Do not explain your reasoning.
+        """.formatted(question, chunkText);
 
             String grade = llama3.generate(evalPrompt).trim();
 

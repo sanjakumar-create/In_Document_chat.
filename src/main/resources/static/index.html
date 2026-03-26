@@ -3,9 +3,8 @@
 <head>
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-    <title>The Vault | Sovereign Intelligence</title>
+    <title>Sovereign Intelligence | The Vault</title>
 
-    <!-- Scripts -->
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -14,7 +13,6 @@
     <script src="https://unpkg.com/react-router-dom@6.3.0/umd/react-router-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Fonts & Icons -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
 
@@ -35,53 +33,20 @@
                         "background": "#0b1326",
                         "primary-container": "#8083ff",
                         "surface-container": "#171f33",
-                        "on-tertiary-container": "#081486",
-                        "secondary-fixed-dim": "#b9c8de",
-                        "surface-container-lowest": "#060e20",
-                        "on-primary-container": "#0d0096",
-                        "surface-variant": "#2d3449",
-                        "tertiary-fixed-dim": "#bdc2ff",
-                        "tertiary": "#bdc2ff",
-                        "on-error": "#690005",
-                        "inverse-surface": "#dae2fd",
-                        "on-tertiary-fixed-variant": "#2f3aa3",
-                        "on-tertiary-fixed": "#000767",
-                        "secondary-fixed": "#d4e4fa",
-                        "surface-container-highest": "#2d3449",
-                        "secondary-container": "#39485a",
-                        "on-secondary-container": "#a7b6cc",
-                        "on-primary": "#1000a9",
-                        "primary-fixed-dim": "#c0c1ff",
-                        "on-surface-variant": "#c7c4d7",
-                        "outline-variant": "#464554",
-                        "on-secondary-fixed-variant": "#39485a",
-                        "on-tertiary": "#131e8c",
-                        "surface-tint": "#c0c1ff",
+                        "surface-container-low": "#131b2e",
                         "surface-container-high": "#222a3d",
                         "on-surface": "#dae2fd",
-                        "primary-fixed": "#e1e0ff",
-                        "surface-bright": "#31394d",
-                        "tertiary-fixed": "#e0e0ff",
-                        "on-secondary": "#233143",
-                        "on-secondary-fixed": "#0d1c2d",
-                        "inverse-primary": "#494bd6",
-                        "on-error-container": "#ffdad6",
-                        "surface-container-low": "#131b2e",
-                        "error-container": "#93000a",
-                        "on-background": "#dae2fd",
-                        "on-primary-fixed-variant": "#2f2ebe",
-                        "inverse-on-surface": "#283044"
+                        "on-surface-variant": "#c7c4d7",
+                        "tertiary": "#bdc2ff",
+                        "outline-variant": "#464554",
                     },
                     fontFamily: {
-                        "headline": ["Inter"], "body": ["Inter"],
-                        "label": ["Inter"], "inter": ["Inter"]
-                    },
-                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }
-                }
-            }
+                        "inter": ["Inter", "sans-serif"]
+                    }
+                },
+            },
         }
     </script>
-
     <style>
         body { font-family: 'Inter', sans-serif; }
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
@@ -91,7 +56,6 @@
         .pulse-soft { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
         .lithographic-glow { background: linear-gradient(45deg, #c0c1ff, #8083ff); box-shadow: 0 0 20px rgba(192, 193, 255, 0.2); }
-        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; background: #c0c1ff; border-radius: 50%; cursor: pointer; }
         .dot-bounce { animation: bounce 1s infinite; }
         @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
     </style>
@@ -105,10 +69,10 @@
     const { MemoryRouter, Routes, Route, Link, useNavigate, useLocation } = ReactRouterDOM;
 
     // ─── Constants ──────────────────────────────────────────────────────────────
-    const API_BASE = 'http://localhost:8080';
-    const LS_DOCS  = 'vault_docs_v2';
-    const LS_CONVS = 'vault_convs_v2';
-    const LS_SETTINGS = 'vault_settings_v2';
+    const API_BASE = ' ';
+    const LS_DOCS  = 'vault_docs_v3';
+    const LS_CONVS = 'vault_convs_v3';
+    const LS_SETTINGS = 'vault_settings_v3';
 
     const DEFAULT_SETTINGS = {
         similarityThreshold: 0.70,
@@ -147,13 +111,22 @@
             return res.text();
         },
 
-        async askQuestion(question, settings) {
+        async deleteDocument(filename) {
+            const params = new URLSearchParams({ filename });
+            const res = await fetch(`${API_BASE}/api/documents/delete?${params.toString()}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            return res.text();
+        },
+
+        async askQuestion(question, settings, filename) {
+            // 🔒 BULLETPROOF URL ENCODING: Solves the '#' symbol issue
             const params = new URLSearchParams({
-                question,
-                minScore:   settings.similarityThreshold,
-                maxResults: settings.maxResults
+                question: question,
+                minScore: settings.similarityThreshold,
+                maxResults: settings.maxResults,
+                filename: filename
             });
-            const res = await fetch(`${API_BASE}/api/chat/ask?${params}`);
+            const res = await fetch(`${API_BASE}/api/chat/ask?${params.toString()}`);
             if (!res.ok) throw new Error(`Server returned ${res.status}`);
             return res.json();
         },
@@ -236,7 +209,7 @@
                             <Icon name="security" className="text-on-primary-container" fill />
                         </div>
                         <div>
-                            <h1 className="text-xl font-bold tracking-tighter text-indigo-400">The Vault</h1>
+                            <h1 className="text-xl font-bold tracking-tighter text-indigo-400">The Vault <span className="text-xs text-green-400 ml-1">v3.0</span></h1>
                             <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Sovereign Intel</p>
                         </div>
                     </div>
@@ -319,28 +292,51 @@
             try { await VaultAPI.clearHistory(); } catch (e) {}
         };
 
-        const sendMessage = async () => {
-            if (!input.trim() || isLoading) return;
-            const question = input.trim();
+        // 🗑️ Handle deleting a document from ChromaDB
+        const handleDeleteDocument = async (doc) => {
+            try {
+                await VaultAPI.deleteDocument(doc.name);
+                setDocuments(prev => prev.filter(d => d.id !== doc.id));
+                showToast(`Successfully purged "${doc.name}" from database.`, 'success');
+            } catch (err) {
+                showToast(`Error removing "${doc.name}": ${err.message}`, 'error');
+            }
+        };
+
+        // 🧠 The Bulletproof Ask Function
+        const handleAskQuestion = async (predefinedQuestion = null) => {
+            let textToAsk = input;
+            if (typeof predefinedQuestion === 'string') {
+                textToAsk = predefinedQuestion;
+            }
+            if (!textToAsk || !textToAsk.trim() || isLoading) return;
+
+            // Figure out which file we are talking about
+            const currentFile = documents.length > 0 ? documents[documents.length - 1].name : "";
+
+            if (!currentFile) {
+                setMessages(prev => [...prev, { role: 'ai', content: "⚠️ Please upload a document first!", citations: [], id: Date.now() }]);
+                return;
+            }
+
             setInput('');
             if (textareaRef.current) { textareaRef.current.style.height = 'auto'; }
 
-            const userMsg = { role: 'user', content: question, id: Date.now() };
+            const userMsg = { role: 'user', content: textToAsk, id: Date.now() };
             setMessages(prev => [...prev, userMsg]);
             setIsLoading(true);
 
             try {
-                const response = await VaultAPI.askQuestion(question, settings);
+                const response = await VaultAPI.askQuestion(textToAsk, settings, currentFile);
                 const aiMsg = { role: 'ai', content: response.answer, citations: response.citations || [], id: Date.now() + 1 };
                 setMessages(prev => {
                     const updated = [...prev, aiMsg];
-
                     // Persist to conversation history
                     if (!currentConvId) {
                         const newId = Date.now().toString();
                         setCurrentConvId(newId);
                         setConversations(p => [{
-                            id: newId, title: question, messages: updated,
+                            id: newId, title: textToAsk, messages: updated,
                             createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
                         }, ...p]);
                     } else {
@@ -352,7 +348,7 @@
                 });
             } catch (err) {
                 setMessages(prev => [...prev, {
-                    role: 'ai', content: `Connection error: ${err.message}. Make sure the backend is running at ${API_BASE}.`,
+                    role: 'ai', content: `Connection error: ${err.message}. Make sure the backend is running.`,
                     citations: [], id: Date.now() + 1, isError: true
                 }]);
             } finally {
@@ -361,7 +357,7 @@
         };
 
         const handleKeyDown = (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAskQuestion(); }
         };
 
         const suggestions = [
@@ -391,9 +387,6 @@
                         <div className="p-5 flex flex-col h-full overflow-hidden">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-sm font-bold text-on-surface">Knowledge Base</h2>
-                                {documents.length > 0 && (
-                                    <button onClick={() => setDocuments([])} className="text-[10px] text-slate-600 hover:text-red-400 transition-colors">Clear All</button>
-                                )}
                             </div>
 
                             {/* Drop Zone */}
@@ -461,8 +454,8 @@
                                                         </div>
                                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                                                             <Icon name="check_circle" className="text-green-400 text-sm" fill />
-                                                            <button onClick={() => setDocuments(prev => prev.filter(d => d.id !== doc.id))}
-                                                                    className="text-slate-600 hover:text-red-400 transition-colors ml-1">
+                                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteDocument(doc); }}
+                                                                    className="text-slate-600 hover:text-red-400 transition-colors ml-1 px-1">
                                                                 <Icon name="delete" className="text-sm" />
                                                             </button>
                                                         </div>
@@ -500,7 +493,7 @@
                                     </p>
                                     <div className="grid grid-cols-2 gap-3 max-w-md w-full">
                                         {suggestions.map(q => (
-                                            <button key={q} onClick={() => setInput(q)}
+                                            <button key={q} onClick={(e) => { e.preventDefault(); handleAskQuestion(q); }}
                                                     className="px-4 py-3 bg-[#171f33] hover:bg-[#222a3d] rounded-xl text-xs text-left text-on-surface-variant hover:text-on-surface transition-all border border-outline-variant/10">
                                                 {q}
                                             </button>
@@ -600,7 +593,7 @@
                                               className="w-full bg-[#171f33] border border-outline-variant/20 rounded-2xl py-4 pl-5 pr-14 text-sm text-on-surface focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all placeholder-slate-600 resize-none overflow-hidden disabled:opacity-60"
                                               style={{ minHeight: '52px', maxHeight: '140px' }}
                                               onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 140) + 'px'; }} />
-                                    <button onClick={sendMessage} disabled={!input.trim() || isLoading}
+                                    <button onClick={(e) => { e.preventDefault(); handleAskQuestion(); }} disabled={!input.trim() || isLoading}
                                             className="absolute right-3 top-2.5 w-10 h-10 bg-primary-container text-on-primary-container rounded-xl flex items-center justify-center hover:bg-primary transition-all active:scale-90 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed">
                                         <Icon name={isLoading ? 'hourglass_empty' : 'send'} className="text-sm" />
                                     </button>
@@ -623,6 +616,15 @@
     const LibraryScreen = ({ documents, setDocuments, conversations }) => {
         const navigate = useNavigate();
         const recentConvs = conversations.slice(0, 5);
+        const [toast, setToast] = useState(null);
+
+        const handleDeleteDocument = async (doc) => {
+            try {
+                await VaultAPI.deleteDocument(doc.name);
+                setDocuments(prev => prev.filter(d => d.id !== doc.id));
+                setToast({ message: `Successfully purged "${doc.name}" from database.`, type: 'success' });
+            } catch (err) { setToast({ message: `Error removing "${doc.name}": ${err.message}`, type: 'error' }); }
+        };
 
         return (
             <div className="h-screen flex flex-col overflow-hidden bg-background">
@@ -662,7 +664,7 @@
                                                         className="flex-1 text-xs py-2 bg-primary-container/20 hover:bg-primary-container/40 text-primary rounded-lg transition-colors font-semibold flex items-center justify-center gap-1">
                                                     <Icon name="chat" className="text-sm" /> Chat
                                                 </button>
-                                                <button onClick={() => setDocuments(prev => prev.filter(d => d.id !== doc.id))}
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteDocument(doc); }}
                                                         className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors">
                                                     <Icon name="delete" className="text-sm" />
                                                 </button>
@@ -695,6 +697,7 @@
                         )}
                     </section>
                 </main>
+                {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
             </div>
         );
     };

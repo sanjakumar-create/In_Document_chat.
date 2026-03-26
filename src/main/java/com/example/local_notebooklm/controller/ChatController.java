@@ -5,6 +5,7 @@ import com.example.local_notebooklm.service.ChatbotService;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
+@CrossOrigin(origins = "*") // <--- ADD THIS LINE TO FIX CORS!
 @RequestMapping("/api/chat")
 public class ChatController {
 
@@ -23,10 +24,10 @@ public class ChatController {
     @GetMapping("/ask")
     public ChatResponse askAI(
             @RequestParam String question,
+            @RequestParam String filename, // <--- ADD THIS NEW PARAMETER
             @RequestParam(defaultValue = "0.70") double minScore,
             @RequestParam(defaultValue = "5") int maxResults) {
-        return chatbotService.askAdvancedQuestion(question, minScore, maxResults);
-    }
+        return chatbotService.askAdvancedQuestion(question, minScore, maxResults, filename);    }
 
     /**
      * Clears the server-side conversational memory window.

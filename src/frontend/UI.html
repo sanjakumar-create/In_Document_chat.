@@ -4,8 +4,7 @@
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <title>Sovereign Intelligence | The Vault</title>
-    
-    <!-- Scripts -->
+
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -14,7 +13,6 @@
     <script src="https://unpkg.com/react-router-dom@6.3.0/umd/react-router-dom.development.js"></script>
     <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
 
-    <!-- Fonts & Icons -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
 
@@ -24,426 +22,309 @@
             theme: {
                 extend: {
                     colors: {
-                        "error": "#ffb4ab",
                         "primary": "#c0c1ff",
-                        "secondary": "#b9c8de",
-                        "tertiary-container": "#7c87f3",
-                        "on-primary-fixed": "#07006c",
-                        "outline": "#908fa0",
-                        "surface-dim": "#0b1326",
                         "surface": "#0b1326",
                         "background": "#0b1326",
                         "primary-container": "#8083ff",
                         "surface-container": "#171f33",
-                        "on-tertiary-container": "#081486",
-                        "secondary-fixed-dim": "#b9c8de",
-                        "surface-container-lowest": "#060e20",
-                        "on-primary-container": "#0d0096",
-                        "surface-variant": "#2d3449",
-                        "tertiary-fixed-dim": "#bdc2ff",
-                        "tertiary": "#bdc2ff",
-                        "on-error": "#690005",
-                        "inverse-surface": "#dae2fd",
-                        "on-tertiary-fixed-variant": "#2f3aa3",
-                        "on-tertiary-fixed": "#000767",
-                        "secondary-fixed": "#d4e4fa",
-                        "surface-container-highest": "#2d3449",
-                        "secondary-container": "#39485a",
-                        "on-secondary-container": "#a7b6cc",
-                        "on-primary": "#1000a9",
-                        "primary-fixed-dim": "#c0c1ff",
-                        "on-surface-variant": "#c7c4d7",
-                        "outline-variant": "#464554",
-                        "on-secondary-fixed-variant": "#39485a",
-                        "on-tertiary": "#131e8c",
-                        "surface-tint": "#c0c1ff",
+                        "surface-container-low": "#131b2e",
                         "surface-container-high": "#222a3d",
                         "on-surface": "#dae2fd",
-                        "primary-fixed": "#e1e0ff",
-                        "surface-bright": "#31394d",
-                        "tertiary-fixed": "#e0e0ff",
-                        "on-secondary": "#233143",
-                        "on-secondary-fixed": "#0d1c2d",
-                        "inverse-primary": "#494bd6",
-                        "on-error-container": "#ffdad6",
-                        "surface-container-low": "#131b2e",
-                        "error-container": "#93000a",
-                        "on-background": "#dae2fd",
-                        "on-primary-fixed-variant": "#2f2ebe",
-                        "inverse-on-surface": "#283044"
+                        "on-surface-variant": "#c7c4d7",
+                        "tertiary": "#bdc2ff",
+                        "outline-variant": "#464554",
                     },
                     fontFamily: {
-                        "headline": ["Inter"],
-                        "body": ["Inter"],
-                        "label": ["Inter"],
-                        "inter": ["Inter"]
-                    },
-                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                        "inter": ["Inter", "sans-serif"]
+                    }
                 },
             },
         }
     </script>
     <style>
         body { font-family: 'Inter', sans-serif; }
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-        }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #2d3449; border-radius: 10px; }
-        .pulse-soft { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
-        
-        .lithographic-glow {
-            background: linear-gradient(45deg, #c0c1ff, #8083ff);
-            box-shadow: 0 0 20px rgba(192, 193, 255, 0.2);
-        }
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 16px;
-            height: 16px;
-            background: #c0c1ff;
-            border-radius: 50%;
-            cursor: pointer;
-        }
     </style>
 </head>
 <body class="bg-background text-on-surface antialiased overflow-hidden selection:bg-primary/30 selection:text-primary">
-    <div id="root"></div>
+<div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-        const { createRoot } = ReactDOM;
-        const { MemoryRouter, Routes, Route, Link, useNavigate, useLocation } = ReactRouterDOM;
+<script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+    const { createRoot } = ReactDOM;
+    const { MemoryRouter, Routes, Route, Link, useLocation } = ReactRouterDOM;
 
-        // Components
-        const Sidebar = () => {
-            const location = useLocation();
-            const currentPath = location.pathname;
+    // --- Sidebar Component ---
+    const Sidebar = () => {
+        const location = useLocation();
+        const navItems = [
+            { path: '/', icon: 'dashboard_customize', label: 'Workspace' },
+            { path: '/library', icon: 'book_5', label: 'Library' },
+            { path: '/settings', icon: 'settings', label: 'Settings' },
+        ];
 
-            const navItems = [
-                { path: '/', icon: 'dashboard_customize', label: 'Workspace' },
-                { path: '/library', icon: 'book_5', label: 'Library' },
-                { path: '/history', icon: 'history', label: 'History' },
-                { path: '/settings', icon: 'settings', label: 'Settings' },
-            ];
-
-            return (
-                <aside className="fixed left-0 top-0 h-screen w-64 bg-[#131b2e] flex flex-col py-6 z-50">
-                    <div className="px-6 mb-10">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 rounded-xl bg-primary-container flex items-center justify-center">
-                                <span className="material-symbols-outlined text-on-primary-container" style={{ fontVariationSettings: "'FILL' 1" }}>security</span>
-                            </div>
-                            <div>
-                                <h1 className="text-xl font-bold tracking-tighter text-indigo-400">The Vault</h1>
-                                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Sovereign Intel</p>
-                            </div>
+        return (
+            <aside className="fixed left-0 top-0 h-screen w-64 bg-[#131b2e] flex flex-col py-6 z-50">
+                <div className="px-6 mb-10">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-xl bg-primary-container flex items-center justify-center">
+                            <span className="material-symbols-outlined text-white" style={{ fontVariationSettings: "'FILL' 1" }}>security</span>
                         </div>
-                        <button className="w-full lithographic-glow text-on-primary py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:scale-[0.98] transition-all duration-150">
-                            <span className="material-symbols-outlined text-sm">add</span>
-                            <span className="text-sm">New Analysis</span>
-                        </button>
-                    </div>
-                    <nav className="flex-1 space-y-1 font-inter tracking-tight leading-relaxed">
-                        {navItems.map((item) => {
-                            const isActive = currentPath === item.path || (item.path !== '/' && currentPath.startsWith(item.path));
-                            return (
-                                <Link 
-                                    key={item.path} 
-                                    to={item.path} 
-                                    className={`flex items-center px-4 py-3 mx-4 rounded-lg transition-all duration-200 gap-3 ${
-                                        isActive 
-                                        ? 'text-indigo-400 bg-[#171f33] border-l-4 border-indigo-500 font-semibold' 
-                                        : 'text-slate-400 hover:text-slate-200 hover:bg-[#171f33]'
-                                    }`}
-                                >
-                                    <span className="material-symbols-outlined" style={isActive ? { fontVariationSettings: "'FILL' 1" } : {}}>{item.icon}</span>
-                                    {item.label}
-                                </Link>
-                            );
-                        })}
-                    </nav>
-                    <div className="px-6 mt-auto">
-                        <div className="flex items-center gap-3 p-3 rounded-xl bg-[#171f33]/50">
-                            <img alt="User Profile" className="w-8 h-8 rounded-full border border-indigo-500/30 object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC3Ni_oQhjMMp0vuGdli7WFKvlz0lPdWQ5Y2mY0O1PXEDr9R_2l4Ur0_e-IuWZLuRQNzFncTcWByFREsvCmldNOL_2UXrCnOvrWAmefOuzfDWVQ9iu6Pjh_8TCyugjbinjAetYaTC3eYWSqXe6Snd6xa_dyHU1ftOeXpF7WJvg0WKxgb4M4WYobkNG0Ov48_GETJCT-zx9xj3PdKnHG-l2Zd2JeQBPA7Nl5Lmc9Ay85SgDK-epdiXbtTdTldL7iFQlzBaLuw3QJvQ" />
-                            <div className="overflow-hidden">
-                                <p className="text-xs font-bold truncate">Alex Chen</p>
-                                <p className="text-[10px] text-slate-500">Tier: Sentinel</p>
-                            </div>
+                        <div>
+                            <h1 className="text-xl font-bold tracking-tighter text-indigo-400">The Vault <span className="text-xs text-green-400 ml-1">v2.0</span></h1>
+                            <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Sovereign Intel</p>
                         </div>
                     </div>
-                </aside>
-            );
-        };
-
-        const Topbar = ({ title }) => (
-            <header className="fixed top-0 right-0 w-[calc(100%-16rem)] h-16 bg-[#0b1326]/80 backdrop-blur-xl z-40 flex items-center justify-between px-8 shadow-2xl shadow-[#060e20]/40">
-                <div className="flex items-center gap-4">
-                    <h2 className="headline-lg font-bold tracking-tight text-[#c0c1ff]">{title}</h2>
+                    <button onClick={() => window.location.reload()} className="w-full bg-indigo-500 text-white py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-600 transition-all">
+                        <span className="material-symbols-outlined text-sm">add</span>
+                        <span className="text-sm">New Analysis</span>
+                    </button>
                 </div>
-                <div className="flex items-center gap-6">
-                    <div className="relative group">
-                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">search</span>
-                        <input className="bg-surface-container-low border border-outline-variant/20 focus:ring-1 focus:ring-primary rounded-full pl-10 pr-4 py-1.5 text-sm w-64 transition-all placeholder:text-slate-600 focus:outline-none" placeholder="Search..." type="text" />
-                    </div>
-                    <div className="flex items-center gap-4 text-slate-400">
-                        <button className="hover:text-indigo-300 transition-opacity"><span className="material-symbols-outlined">account_tree</span></button>
-                        <button className="hover:text-indigo-300 transition-opacity"><span className="material-symbols-outlined">tune</span></button>
-                    </div>
-                </div>
-            </header>
+                <nav className="flex-1 space-y-1">
+                    {navItems.map((item) => {
+                        const isActive = location.pathname === item.path;
+                        return (
+                            <Link key={item.path} to={item.path} className={`flex items-center px-4 py-3 mx-4 rounded-lg transition-all gap-3 ${isActive ? 'text-indigo-400 bg-[#171f33] border-l-4 border-indigo-500 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-[#171f33]'}`}>
+                                <span className="material-symbols-outlined">{item.icon}</span>
+                                {item.label}
+                            </Link>
+                        );
+                    })}
+                </nav>
+            </aside>
         );
+    };
 
-        // Screens
-        const Workspace = () => {
-            return (
-                <div className="ml-64 h-screen flex flex-col relative overflow-hidden">
-                     <header className="fixed top-0 w-full z-50 bg-[#0b1326] flex items-center justify-between px-6 h-16 font-['Inter'] antialiased">
-                        <div className="flex items-center gap-8 pl-64">
-                            <span className="text-xl font-bold tracking-tight text-[#c0c1ff]">Project Alpha Analysis</span>
-                        </div>
-                        <div className="flex items-center gap-4 pr-64">
-                            <button className="p-2 text-[#c7c4d7] hover:bg-[#222a3d] rounded-full transition-colors duration-200 active:scale-95">
-                                <span className="material-symbols-outlined">account_circle</span>
-                            </button>
-                        </div>
-                    </header>
+    // --- Workspace (Main Chat) Component ---
+    const Workspace = () => {
+        const [question, setQuestion] = useState('');
+        const [chatHistory, setChatHistory] = useState([]);
+        const [isLoading, setIsLoading] = useState(false);
+        const [uploadedFiles, setUploadedFiles] = useState([]);
+        const [isUploading, setIsUploading] = useState(false);
+        const fileInputRef = useRef(null);
+        const chatEndRef = useRef(null);
 
-                    <main className="mt-16 h-[calc(100vh-64px)] flex overflow-hidden w-full">
-                        <section className="w-[30%] bg-surface-container-low flex flex-col border-r border-outline-variant/10 relative z-10">
-                            <div className="p-6 flex flex-col h-full">
-                                <div className="flex items-center justify-between mb-8">
-                                    <h2 className="text-xl font-bold text-on-surface tracking-tight">Knowledge Base</h2>
-                                    <span className="material-symbols-outlined text-on-surface-variant">info</span>
-                                </div>
-                                <div className="border-2 border-dashed border-outline-variant/30 rounded-2xl p-8 flex flex-col items-center justify-center text-center bg-surface-container/50 hover:bg-surface-container transition-colors group cursor-pointer mb-8">
-                                    <div className="w-12 h-12 rounded-full bg-secondary-container/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                        <span className="material-symbols-outlined text-primary">upload_file</span>
-                                    </div>
-                                    <p className="text-sm font-medium text-on-surface">Drop files here to ingest</p>
-                                    <p className="text-[11px] text-on-surface-variant mt-1">PDF, DOCX, TXT support (Max 50MB)</p>
-                                </div>
-                                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                                    <h3 className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-4">Ingested Documents</h3>
-                                    <div className="space-y-3">
-                                        <div className="p-3 bg-surface-container rounded-xl flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
-                                            <div className="w-8 h-8 rounded-lg bg-red-900/20 flex items-center justify-center"><span className="material-symbols-outlined text-red-400 text-sm">picture_as_pdf</span></div>
-                                            <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-on-surface truncate">Q3_Financial_Analysis.pdf</p><p className="text-[10px] text-on-surface-variant">1.2 MB • 24 pages</p></div>
-                                        </div>
-                                        <div className="p-3 bg-surface-container rounded-xl flex items-center gap-3 hover:bg-surface-container-high transition-colors group cursor-pointer">
-                                            <div className="w-8 h-8 rounded-lg bg-blue-900/20 flex items-center justify-center"><span className="material-symbols-outlined text-blue-400 text-sm">description</span></div>
-                                            <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-on-surface truncate">Product_Specs_v2.docx</p><p className="text-[10px] text-on-surface-variant">450 KB • 12 pages</p></div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="mt-6 pt-4 border-t border-outline-variant/10">
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
-                                        <span className="text-[11px] font-medium text-on-surface-variant tracking-wide">System Ready</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
+        // Auto-scroll chat to bottom
+        useEffect(() => {
+            chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, [chatHistory]);
 
-                        <section className="w-[70%] bg-surface flex flex-col relative">
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-8 space-y-8">
-                                <div className="flex justify-end">
-                                    <div className="max-w-[80%] bg-surface-container-high p-4 rounded-2xl rounded-tr-none shadow-xl border border-outline-variant/10">
-                                        <p className="text-sm text-on-surface leading-relaxed">Based on the Q3 Financial Analysis, what were the primary risks identified in the supply chain section?</p>
-                                    </div>
-                                </div>
-                                <div className="flex flex-col gap-4">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <div className="w-6 h-6 rounded bg-primary-container/20 flex items-center justify-center"><span className="material-symbols-outlined text-primary text-xs" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span></div>
-                                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Sovereign Intelligence</span>
-                                    </div>
-                                    <div className="max-w-[90%] bg-surface-container rounded-2xl rounded-tl-none p-6 shadow-sm border-l-4 border-tertiary">
-                                        <div className="space-y-4">
-                                            <p className="text-sm text-on-surface leading-relaxed">The Q3 Financial Analysis highlights three critical risks in your current supply chain operations:</p>
-                                            <ul className="space-y-2 list-disc list-inside text-sm text-on-surface-variant">
-                                                <li>Dependency on single-source semiconductor vendors in the APAC region.</li>
-                                                <li>Logistic volatility causing a projected 15% increase in lead times for Tier-1 components.</li>
-                                                <li>Inadequate buffer stock for critical raw materials.</li>
-                                            </ul>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="p-6 bg-surface-container-low border-t border-outline-variant/10">
-                                <div className="max-w-4xl mx-auto flex flex-col gap-3">
-                                    <div className="relative">
-                                        <input className="w-full bg-surface-container-high border border-outline-variant/20 rounded-2xl py-4 pl-6 pr-16 text-sm text-on-surface focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all placeholder-on-surface-variant/50" placeholder="Ask anything about your documents..." type="text" />
-                                        <button className="absolute right-3 top-2.5 w-10 h-10 bg-primary-container text-on-primary-container rounded-xl flex items-center justify-center hover:bg-primary transition-all active:scale-90 shadow-lg">
-                                            <span className="material-symbols-outlined">send</span>
-                                        </button>
-                                    </div>
-                                    <div className="flex items-center justify-center gap-2">
-                                        <span className="material-symbols-outlined text-[14px] text-emerald-400">lock</span>
-                                        <p className="text-[10px] text-on-surface-variant/70 text-center font-medium">100% Local processing. No data leaves your machine.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-                    </main>
-                </div>
-            );
+        // 🔒 THE BULLETPROOF FIX
+        const handleAskQuestion = async (predefinedQuestion = null) => {
+            let textToAsk = question;
+            if (typeof predefinedQuestion === 'string') {
+                textToAsk = predefinedQuestion;
+            }
+            if (!textToAsk || !textToAsk.trim()) return;
+
+            // 1. Figure out which file we are talking about
+            const currentFile = uploadedFiles.length > 0 ? uploadedFiles[uploadedFiles.length - 1].name : "";
+
+            if (!currentFile) {
+                setChatHistory(prev => [...prev, { role: 'ai', text: "⚠️ Please upload a document first!" }]);
+                return;
+            }
+
+            setChatHistory(prev => [...prev, { role: 'user', text: textToAsk }]);
+            setQuestion('');
+            setIsLoading(true);
+
+            try {
+                // 2. THIS IS THE MAGIC! Safely encodes the '#' and '?' characters!
+                const params = new URLSearchParams();
+                params.append("question", textToAsk);
+                params.append("filename", currentFile);
+
+                const requestUrl = `http://localhost:8080/api/chat/ask?${params.toString()}`;
+                console.log("🚀 SENDING REQUEST TO:", requestUrl);
+
+                const response = await fetch(requestUrl);
+
+                if (!response.ok) {
+                    console.error("Backend rejected with status:", response.status);
+                    throw new Error("Server returned status " + response.status);
+                }
+
+                const data = await response.json();
+                setChatHistory(prev => [...prev, { role: 'ai', text: data.answer, citations: data.citations }]);
+            } catch (error) {
+                console.error("Fetch failed:", error);
+                setChatHistory(prev => [...prev, { role: 'ai', text: "❌ Connection error: Server returned 400. Make sure the backend is running at http://localhost:8080." }]);
+            } finally {
+                setIsLoading(false);
+            }
         };
 
-        const Library = () => {
-            return (
-                <div className="h-screen flex flex-col overflow-hidden bg-background">
-                    <Topbar title="Library" />
-                    <main className="ml-64 mt-16 p-8 flex gap-8 overflow-y-auto custom-scrollbar h-[calc(100vh-64px)]">
-                        <section className="flex-1">
-                            <div className="flex items-center justify-between mb-8">
-                                <div>
-                                    <p className="label-sm text-on-surface-variant uppercase tracking-widest font-semibold text-[10px] mb-1">Knowledge Repositories</p>
-                                    <h3 className="text-2xl font-bold tracking-tight">Active Archives</h3>
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6 pb-12">
-                                <div className="group bg-surface-container p-5 rounded-xl border border-transparent hover:border-indigo-500/20 transition-all duration-300 relative overflow-hidden">
-                                    <div className="absolute top-0 left-0 w-1 h-full bg-tertiary"></div>
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-primary group-hover:scale-110 transition-transform"><span className="material-symbols-outlined text-2xl">description</span></div>
-                                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 text-green-400 text-[10px] font-bold uppercase tracking-tighter"><span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>Verified</div>
-                                    </div>
-                                    <h4 className="font-bold text-lg mb-1 leading-snug">Q3 Market Volatility Analysis</h4>
-                                    <p className="text-sm text-slate-400 line-clamp-2 mb-6">Cross-referenced intelligence report regarding EMEA equity shifts and crypto-asset correlations.</p>
-                                </div>
-                                 <div className="group bg-surface-container p-5 rounded-xl border border-transparent hover:border-indigo-500/20 transition-all duration-300 relative overflow-hidden">
-                                    <div className="absolute top-0 left-0 w-1 h-full bg-secondary-container"></div>
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-secondary group-hover:scale-110 transition-transform"><span className="material-symbols-outlined text-2xl">database</span></div>
-                                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-bold uppercase tracking-tighter"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>Pending</div>
-                                    </div>
-                                    <h4 className="font-bold text-lg mb-1 leading-snug">Neural Network Weights v4</h4>
-                                    <p className="text-sm text-slate-400 line-clamp-2 mb-6">Proprietary model architecture definitions for the Sovereign autonomous agent core.</p>
-                                </div>
-                            </div>
-                        </section>
-                        <section className="w-80 flex flex-col shrink-0">
-                            <div className="mb-8">
-                                <p className="label-sm text-on-surface-variant uppercase tracking-widest font-semibold text-[10px] mb-1">Interaction Log</p>
-                                <h3 className="text-xl font-bold tracking-tight">Recent Threads</h3>
-                            </div>
-                            <div className="flex-1 space-y-4">
-                                <div className="p-4 rounded-xl bg-surface-container-low border-l-2 border-primary hover:bg-surface-container transition-colors cursor-pointer group">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <span className="text-[10px] font-mono text-slate-500">2m ago</span>
-                                        <span className="material-symbols-outlined text-sm text-primary opacity-0 group-hover:opacity-100 transition-opacity">open_in_new</span>
-                                    </div>
-                                    <h5 className="font-bold text-sm mb-1 text-slate-200">Market Correction Logic</h5>
-                                    <p className="text-xs text-slate-500 line-clamp-2">"Based on the Q3 volatility report, what are the primary exit signals for..."</p>
-                                </div>
-                            </div>
-                        </section>
-                    </main>
-                </div>
-            );
+        // Handle File Upload
+        const handleFileChange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            setIsUploading(true);
+            const formData = new FormData();
+            formData.append('file', file); // Sending actual file bytes!
+
+            try {
+                const response = await fetch('http://localhost:8080/api/documents/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    setUploadedFiles(prev => [...prev, { name: file.name, size: (file.size / 1024).toFixed(1) + ' KB' }]);
+                } else {
+                    alert("Upload failed. Ensure backend accepts multipart files and 413 error is fixed.");
+                }
+            } catch (error) {
+                alert("Network error connecting to backend.");
+            } finally {
+                setIsUploading(false);
+                e.target.value = null; // reset input
+            }
         };
 
-        const Settings = () => {
-            return (
-                <div className="h-screen flex flex-col overflow-hidden bg-background">
-                    <Topbar title="Intelligence Settings" />
-                    <main className="ml-64 mt-16 p-12 overflow-y-auto custom-scrollbar h-[calc(100vh-64px)] max-w-6xl">
-                        <div className="grid grid-cols-12 gap-10">
-                            <section className="col-span-12 lg:col-span-7 space-y-8">
-                                <div>
-                                    <h3 className="text-2xl font-bold tracking-tight text-primary mb-2">Model Configuration</h3>
-                                    <p className="text-on-surface-variant body-md leading-relaxed">Define the primary intelligence engines and connection protocols for your sovereign instance.</p>
+        return (
+            <div className="ml-64 h-screen flex flex-col relative overflow-hidden">
+                <main className="h-screen flex overflow-hidden w-full">
+
+                    {/* --- Knowledge Base Sidebar --- */}
+                    <section className="w-[30%] bg-surface-container-low flex flex-col border-r border-outline-variant/10 p-6 z-10">
+                        <h2 className="text-xl font-bold text-on-surface tracking-tight mb-8">Knowledge Base</h2>
+
+                        {/* Upload Area */}
+                        <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".pdf,.txt,.docx" />
+                        <div
+                            onClick={() => fileInputRef.current.click()}
+                            className={`border-2 border-dashed border-outline-variant/30 rounded-2xl p-8 flex flex-col items-center justify-center text-center transition-colors cursor-pointer mb-8 ${isUploading ? 'bg-indigo-900/20' : 'bg-surface-container/50 hover:bg-surface-container'}`}
+                        >
+                            <div className="w-12 h-12 rounded-full bg-primary-container/20 flex items-center justify-center mb-4">
+                                <span className="material-symbols-outlined text-primary">{isUploading ? 'sync' : 'upload_file'}</span>
+                            </div>
+                            <p className="text-sm font-medium text-on-surface">{isUploading ? 'Uploading...' : 'Click to browse files'}</p>
+                            <p className="text-[11px] text-on-surface-variant mt-1">PDF, DOCX, TXT support (Max 50MB)</p>
+                        </div>
+
+                        {/* Ingested Files List */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                            <h3 className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-4">Ingested Documents ({uploadedFiles.length})</h3>
+                            <div className="space-y-3">
+                                {uploadedFiles.map((file, idx) => (
+                                    <div key={idx} className="p-3 bg-surface-container rounded-xl flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-indigo-900/20 flex items-center justify-center">
+                                            <span className="material-symbols-outlined text-indigo-400 text-sm">description</span>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-semibold text-on-surface truncate">{file.name}</p>
+                                            <p className="text-[10px] text-on-surface-variant">{file.size}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                {uploadedFiles.length === 0 && <p className="text-xs text-slate-500 text-center mt-10">No documents in vault.</p>}
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* --- Chat Interface --- */}
+                    <section className="w-[70%] bg-surface flex flex-col relative">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-8 space-y-8">
+
+                            {/* Welcome Screen if chat is empty */}
+                            {chatHistory.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-center">
+                                    <div className="w-16 h-16 bg-primary-container/20 rounded-2xl flex items-center justify-center mb-6">
+                                        <span className="material-symbols-outlined text-3xl text-primary">auto_awesome</span>
+                                    </div>
+                                    <h2 className="text-2xl font-bold mb-2">Sovereign Intelligence Ready</h2>
+                                    <p className="text-on-surface-variant mb-12 max-w-md">Upload a document to your Knowledge Base, then ask anything about it. The CRAG engine will verify every source.</p>
+
+                                    <div className="grid grid-cols-2 gap-4 w-full max-w-2xl">
+                                        {["What are the key findings?", "Summarize the main points", "What risks are identified?", "What are the recommendations?"].map((q, i) => (
+                                            <button key={i} onClick={(e) => { e.preventDefault(); handleAskQuestion(q); }} className="p-4 bg-surface-container rounded-xl text-sm text-slate-300 hover:bg-surface-container-high transition-colors text-left border border-outline-variant/10">
+                                                {q}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
-                                <div className="space-y-6">
-                                    <div className="p-6 bg-surface-container rounded-xl border-l-4 border-tertiary">
-                                        <label className="block text-sm font-semibold text-on-surface mb-2 tracking-wide uppercase">Ollama Local Port</label>
-                                        <div className="flex items-center gap-4">
-                                            <div className="relative flex-1">
-                                                <input className="w-full bg-surface-container-low border border-outline-variant/15 rounded-lg px-4 py-3 focus:border-primary focus:ring-0 transition-all text-on-surface font-mono" type="text" defaultValue="http://localhost:11434" />
-                                                <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center text-green-400">
-                                                    <span className="material-symbols-outlined text-sm mr-1">check_circle</span>
-                                                    <span className="text-[10px] font-bold">CONNECTED</span>
-                                                </span>
+                            ) : (
+                                /* Active Chat Messages */
+                                chatHistory.map((msg, index) => (
+                                    <div key={index} className={`flex flex-col gap-4 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                        {msg.role === 'ai' && (
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="material-symbols-outlined text-primary text-xs">auto_awesome</span>
+                                                <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Sovereign Intel</span>
                                             </div>
-                                        </div>
-                                    </div>
-                                    <div className="p-8 bg-surface-container rounded-xl shadow-2xl shadow-background/50">
-                                        <h4 className="text-lg font-bold mb-6 flex items-center">
-                                            <span className="material-symbols-outlined mr-2 text-tertiary">database</span>
-                                            Retrieval Settings
-                                        </h4>
-                                        <div className="space-y-8">
-                                            <div className="space-y-4">
-                                                <div className="flex justify-between items-center">
-                                                    <label className="text-sm font-medium text-on-surface">Similarity Threshold</label>
-                                                    <span className="text-xs font-mono bg-secondary-container px-2 py-1 rounded text-on-secondary-container">0.82</span>
+                                        )}
+                                        <div className={`max-w-[80%] p-5 shadow-xl border border-outline-variant/10 ${msg.role === 'user' ? 'bg-surface-container-high rounded-2xl rounded-tr-none' : 'bg-surface-container rounded-2xl rounded-tl-none border-l-4 border-tertiary'}`}>
+                                            <p className="text-sm text-on-surface leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+
+                                            {msg.citations && msg.citations.length > 0 && msg.citations[0] !== "No relevant sources found." && (
+                                                <div className="mt-4 pt-4 border-t border-outline-variant/20">
+                                                    <p className="text-[10px] font-bold text-on-surface-variant uppercase mb-2">Verified Sources:</p>
+                                                    <ul className="space-y-2">
+                                                        {msg.citations.map((cite, i) => (
+                                                            <li key={i} className="text-[11px] text-on-surface-variant/70 italic border-l-2 border-primary/30 pl-2">"{cite}"</li>
+                                                        ))}
+                                                    </ul>
                                                 </div>
-                                                <input className="w-full h-1.5 bg-surface-container-highest rounded-lg appearance-none cursor-pointer" max="1" min="0" step="0.01" type="range" defaultValue="0.82" />
-                                            </div>
+                                            )}
                                         </div>
                                     </div>
+                                ))
+                            )}
+
+                            {isLoading && (
+                                <div className="flex items-center gap-2 text-primary animate-pulse">
+                                    <span className="material-symbols-outlined text-sm">hourglass_empty</span>
+                                    <span className="text-xs font-bold uppercase tracking-widest">Processing via Local LLM...</span>
                                 </div>
-                            </section>
-                            <aside className="col-span-12 lg:col-span-5 space-y-6">
-                                <div className="p-8 bg-surface-container-high rounded-2xl relative overflow-hidden group">
-                                    <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16 blur-3xl transition-all group-hover:bg-primary/10"></div>
-                                    <div className="relative">
-                                        <h4 className="text-lg font-bold mb-6">Security & Privacy</h4>
-                                        <div className="space-y-6">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <p className="text-sm font-semibold">Offline-First Retrieval</p>
-                                                    <p className="text-[11px] text-on-surface-variant">Prioritize local vector database over cloud sync</p>
-                                                </div>
-                                                <button className="w-12 h-6 bg-primary rounded-full relative transition-colors"><div className="absolute right-1 top-1 w-4 h-4 bg-on-primary rounded-full"></div></button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                 <div className="grid grid-cols-2 gap-4">
-                                    <div className="p-6 bg-surface-container-low rounded-xl">
-                                        <span className="text-[10px] font-bold text-tertiary uppercase tracking-widest block mb-2">Embeddings</span>
-                                        <div className="text-2xl font-bold">14.2k</div>
-                                        <p className="text-[10px] text-on-surface-variant mt-1">Vectorized nodes</p>
-                                    </div>
-                                </div>
-                                <div className="flex gap-4 pt-4">
-                                    <button className="flex-1 bg-surface-container-highest text-on-surface border border-outline-variant/20 py-3 rounded-xl font-semibold hover:bg-surface-variant transition-all">Reset Defaults</button>
-                                    <button className="flex-1 lithographic-glow text-on-primary py-3 rounded-xl font-bold">Save Changes</button>
-                                </div>
-                            </aside>
+                            )}
+                            <div ref={chatEndRef} />
                         </div>
-                    </main>
-                    <div className="fixed bottom-0 right-0 w-1/3 h-1/2 bg-indigo-500/5 blur-[120px] rounded-full -z-10 pointer-events-none"></div>
-                    <div className="fixed top-0 left-64 w-64 h-64 bg-violet-500/5 blur-[100px] rounded-full -z-10 pointer-events-none"></div>
-                </div>
-            );
-        };
 
-        const App = () => {
-            return (
-                <div className="flex bg-background h-screen overflow-hidden">
-                    <Sidebar />
-                    <div className="flex-1 relative">
-                        <Routes>
-                            <Route path="/" element={<Workspace />} />
-                            <Route path="/library" element={<Library />} />
-                            <Route path="/history" element={<Library />} /> {/* Reusing Library for now to satisfy links */}
-                            <Route path="/settings" element={<Settings />} />
-                        </Routes>
-                    </div>
-                </div>
-            );
-        };
-
-        const root = createRoot(document.getElementById('root'));
-        root.render(
-            <MemoryRouter>
-                <App />
-            </MemoryRouter>
+                        {/* Input Box */}
+                        <div className="p-6 bg-surface-container-low border-t border-outline-variant/10">
+                            <div className="max-w-4xl mx-auto flex flex-col gap-3">
+                                <div className="relative">
+                                    <input
+                                        value={question}
+                                        onChange={(e) => setQuestion(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()}
+                                        disabled={isLoading}
+                                        className="w-full bg-surface-container-high border border-outline-variant/20 rounded-2xl py-4 pl-6 pr-16 text-sm text-on-surface focus:outline-none focus:border-primary/50 transition-all placeholder-on-surface-variant/50 disabled:opacity-50"
+                                        placeholder="Ask anything about your documents..."
+                                        type="text"
+                                    />
+                                    <button onClick={(e) => { e.preventDefault(); handleAskQuestion(); }} disabled={isLoading || !question.trim()} className="absolute right-3 top-2.5 w-10 h-10 bg-primary-container text-on-primary-container rounded-xl flex items-center justify-center hover:bg-primary transition-all disabled:opacity-50">
+                                        <span className="material-symbols-outlined">send</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </main>
+            </div>
         );
-    </script>
+    };
+
+    const App = () => (
+        <div className="flex bg-background h-screen overflow-hidden">
+            <Sidebar />
+            <div className="flex-1 relative">
+                <Routes>
+                    <Route path="/" element={<Workspace />} />
+                    <Route path="*" element={<div className="ml-64 p-8">Work in progress...</div>} />
+                </Routes>
+            </div>
+        </div>
+    );
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<MemoryRouter><App /></MemoryRouter>);
+</script>
 </body>
 </html>
