@@ -69,14 +69,21 @@
     const { MemoryRouter, Routes, Route, Link, useNavigate, useLocation } = ReactRouterDOM;
 
     // ─── Constants ──────────────────────────────────────────────────────────────
-    const API_BASE = ' ';
+    const API_BASE = '';
     const LS_DOCS  = 'vault_docs_v3';
     const LS_CONVS = 'vault_convs_v3';
     const LS_SETTINGS = 'vault_settings_v3';
 
+    // Stable UUID for this browser tab — gives each user/tab its own isolated
+    // conversation memory on the server. Regenerated on page reload (intentional —
+    // each new page load starts a fresh session).
+    const SESSION_ID = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'session-' + Date.now().toString(36);
+
     const DEFAULT_SETTINGS = {
-        similarityThreshold: 0.70,
-        maxResults: 5,
+        similarityThreshold: 0.60,
+        maxResults: 10,
         offlineFirst: true
     };
 
@@ -119,12 +126,12 @@
         },
 
         async askQuestion(question, settings, filename) {
-            // 🔒 BULLETPROOF URL ENCODING: Solves the '#' symbol issue
             const params = new URLSearchParams({
-                question: question,
-                minScore: settings.similarityThreshold,
+                question:   question,
+                minScore:   settings.similarityThreshold,
                 maxResults: settings.maxResults,
-                filename: filename
+                filename:   filename,
+                sessionId:  SESSION_ID
             });
             const res = await fetch(`${API_BASE}/api/chat/ask?${params.toString()}`);
             if (!res.ok) throw new Error(`Server returned ${res.status}`);
@@ -132,7 +139,8 @@
         },
 
         async clearHistory() {
-            const res = await fetch(`${API_BASE}/api/chat/clear`, { method: 'POST' });
+            const params = new URLSearchParams({ sessionId: SESSION_ID });
+            const res = await fetch(`${API_BASE}/api/chat/clear?${params.toString()}`, { method: 'POST' });
             return res.text();
         },
 
@@ -328,7 +336,13 @@
 
             try {
                 const response = await VaultAPI.askQuestion(textToAsk, settings, currentFile);
-                const aiMsg = { role: 'ai', content: response.answer, citations: response.citations || [], id: Date.now() + 1 };
+                const aiMsg = {
+                    role: 'ai',
+                    content: response.answer,
+                    citations: response.citations || [],
+                    groundingScore: response.groundingScore ?? null,
+                    id: Date.now() + 1
+                };
                 setMessages(prev => {
                     const updated = [...prev, aiMsg];
                     // Persist to conversation history
@@ -525,6 +539,21 @@
                                                         No matching sources
                                                     </span>
                                                 )}
+                                                {msg.groundingScore != null && msg.citations && msg.citations.length > 0 && (() => {
+                                                    const gs = msg.groundingScore;
+                                                    const pct = Math.round(gs * 100);
+                                                    const [bg, color, label] = gs >= 0.75
+                                                        ? ['bg-emerald-500/10', 'text-emerald-400', 'High grounding']
+                                                        : gs >= 0.50
+                                                        ? ['bg-yellow-500/10',  'text-yellow-400', 'Med grounding']
+                                                        : ['bg-red-500/10',     'text-red-400',    'Low grounding'];
+                                                    return (
+                                                        <span title={`Grounding score: ${pct}% of answer words found in retrieved context`}
+                                                              className={`text-[9px] ${bg} ${color} px-2 py-0.5 rounded-full font-bold uppercase tracking-wide cursor-help`}>
+                                                            {label} {pct}%
+                                                        </span>
+                                                    );
+                                                })()}
                                             </div>
                                             <div className={`max-w-[90%] rounded-2xl rounded-tl-none p-5 border-l-4 ${
                                                 msg.isError ? 'bg-red-900/20 border-red-500/40' : 'bg-[#171f33] border-tertiary'
@@ -821,7 +850,7 @@
             if (status) {
                 setTestResult({ ok: true, msg: `Connected ✓  Model: ${status.generationModel}  |  Embeddings: ${status.embeddingModel}` });
             } else {
-                setTestResult({ ok: false, msg: 'Cannot reach backend at localhost:8080. Is the Spring Boot app running?' });
+                setTestResult({ ok: false, msg: 'Cannot reach backend at localhost:8081. Is the Spring Boot app running?' });
             }
         };
 
@@ -846,7 +875,7 @@
                                 <div className="flex items-center gap-3">
                                     <div className="flex-1 flex items-center gap-2 bg-[#131b2e] border border-outline-variant/15 rounded-lg px-4 py-3">
                                         <Icon name="dns" className="text-slate-500 text-sm" />
-                                        <span className="text-sm font-mono text-on-surface">http://localhost:8080</span>
+                                        <span className="text-sm font-mono text-on-surface">http://localhost:8081</span>
                                         <span className={`ml-auto flex items-center text-[10px] font-bold gap-1 ${backendStatus ? 'text-green-400' : 'text-red-400'}`}>
                                             <Icon name={backendStatus ? 'check_circle' : 'error'} className="text-xs" fill />
                                             {backendStatus ? 'ONLINE' : 'OFFLINE'}
@@ -899,12 +928,12 @@
                                                 {local.maxResults}
                                             </span>
                                         </div>
-                                        <input type="range" min="1" max="10" step="1"
+                                        <input type="range" min="1" max="15" step="1"
                                                value={local.maxResults}
                                                onChange={e => setLocal(p => ({ ...p, maxResults: parseInt(e.target.value) }))}
                                                className="w-full h-1.5 bg-[#2d3449] rounded-lg appearance-none cursor-pointer" />
                                         <div className="flex justify-between text-[10px] text-slate-600 mt-1">
-                                            <span>1 (fastest)</span><span>10 (most thorough)</span>
+                                            <span>1 (fastest)</span><span>15 (most thorough)</span>
                                         </div>
                                     </div>
                                 </div>
@@ -946,11 +975,12 @@
                                 </h4>
                                 <div className="space-y-2 text-xs text-slate-400">
                                     {[
-                                        ['Generation Model', 'Llama 3 (Ollama)'],
-                                        ['Embedding Model', 'nomic-embed-text'],
-                                        ['Vector Database', 'ChromaDB 0.4.24'],
-                                        ['Framework', 'Spring Boot 4 + LangChain4j'],
-                                        ['Document Parser', 'Apache Tika'],
+                                        ['Generation Model', 'Gemma 2 9B (Ollama)'],
+                                        ['Embedding Model',  'mxbai-embed-large 1024d'],
+                                        ['Vector Database',  'ChromaDB 0.4.24'],
+                                        ['Framework',        'Spring Boot 4 + LangChain4j'],
+                                        ['Document Parser',  'PDFBox 2.x + Apache Tika'],
+                                        ['CRAG',             '2-gate + re-rank + multi-query'],
                                     ].map(([k, v]) => (
                                         <div key={k} className="flex justify-between">
                                             <span className="text-slate-600">{k}</span>
@@ -963,7 +993,16 @@
                             <div className="p-6 bg-[#171f33] rounded-2xl">
                                 <h4 className="text-sm font-bold mb-4">CRAG Pipeline</h4>
                                 <div className="space-y-3">
-                                    {['Embed question → vector', 'Search ChromaDB for top chunks', 'Grade each chunk YES/NO', 'Reject hallucination-risk chunks', 'Synthesize from verified facts only'].map((step, i) => (
+                                    {[
+                                        'Expand query → 3 paraphrases',
+                                        'Embed with mxbai-embed-large prefix',
+                                        'Union results, deduplicate chunks',
+                                        'CRAG Gate 1: reject TOC / topic mentions',
+                                        'CRAG Gate 2: require extractable fact',
+                                        'Re-rank verified chunks by relevance',
+                                        'Synthesize with inline quote requirement',
+                                        'Compute grounding score (0–100%)'
+                                    ].map((step, i) => (
                                         <div key={i} className="flex items-center gap-3">
                                             <div className="w-5 h-5 rounded-full bg-primary-container/20 flex items-center justify-center flex-shrink-0">
                                                 <span className="text-[9px] font-bold text-primary">{i + 1}</span>

@@ -16,10 +16,10 @@ public class StatusController {
     public Map<String, String> getStatus() {
         return Map.of(
                 "status", "online",
-                "generationModel", "llama3",
-                "embeddingModel", "nomic-embed-text",
+                "generationModel", "gemma2",
+                "embeddingModel", "mxbai-embed-large",
                 "vectorStore", "ChromaDB",
-                "version", "1.0.0"
+                "version", "2.0.0"
         );
     }
 }
