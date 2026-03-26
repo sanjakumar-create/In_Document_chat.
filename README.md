@@ -240,12 +240,12 @@ When setup completes, you will see:
 === Service Status ===
   Ollama    (port 11434): ONLINE
   ChromaDB  (port 8888):  ONLINE
-  App       (port 8080):  ONLINE
+  App       (port 8081):  ONLINE
 ```
 
 Then open your browser and navigate to:
 ```
-http://localhost:8080
+http://localhost:8081
 ```
 
 ### Windows users (no make)
