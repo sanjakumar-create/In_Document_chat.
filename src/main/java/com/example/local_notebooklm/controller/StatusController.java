@@ -19,7 +19,7 @@ public class StatusController {
                 "generationModel", "gemma2",
                 "embeddingModel", "mxbai-embed-large",
                 "vectorStore", "ChromaDB",
-                "version", "2.0.0"
+                "version", "3.0.0"
         );
     }
 }

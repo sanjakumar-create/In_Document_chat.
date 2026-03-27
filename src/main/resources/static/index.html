@@ -82,7 +82,7 @@
         : 'session-' + Date.now().toString(36);
 
     const DEFAULT_SETTINGS = {
-        similarityThreshold: 0.60,
+        similarityThreshold: 0.30,
         maxResults: 10,
         offlineFirst: true
     };
@@ -125,13 +125,13 @@
             return res.text();
         },
 
-        async askQuestion(question, settings, filename) {
+        async askQuestion(question, settings, filenames, askAll) {
             const params = new URLSearchParams({
                 question:   question,
                 minScore:   settings.similarityThreshold,
                 maxResults: settings.maxResults,
-                filename:   filename,
-                sessionId:  SESSION_ID
+                sessionId:  SESSION_ID,
+                filenames:  askAll ? 'ALL' : (filenames || []).join(',')
             });
             const res = await fetch(`${API_BASE}/api/chat/ask?${params.toString()}`);
             if (!res.ok) throw new Error(`Server returned ${res.status}`);
@@ -255,14 +255,18 @@
 
     // ─── Workspace Screen ─────────────────────────────────────────────────────────
     const WorkspaceScreen = ({ documents, setDocuments, conversations, setConversations, settings }) => {
-        const [messages, setMessages]         = useState([]);
-        const [input, setInput]               = useState('');
-        const [isLoading, setIsLoading]       = useState(false);
-        const [isDragOver, setIsDragOver]     = useState(false);
-        const [isUploading, setIsUploading]   = useState(false);
-        const [toast, setToast]               = useState(null);
+        const [messages, setMessages]           = useState([]);
+        const [input, setInput]                 = useState('');
+        const [isLoading, setIsLoading]         = useState(false);
+        const [isDragOver, setIsDragOver]       = useState(false);
+        const [isUploading, setIsUploading]     = useState(false);
+        const [toast, setToast]                 = useState(null);
         const [expandedCites, setExpandedCites] = useState({});
         const [currentConvId, setCurrentConvId] = useState(null);
+        // Multi-file selection: set of doc IDs checked for querying
+        const [selectedFiles, setSelectedFiles] = useState(new Set());
+        // When true, query ALL ingested documents regardless of selection
+        const [askAll, setAskAll]               = useState(false);
         const messagesEndRef = useRef(null);
         const fileInputRef   = useRef(null);
         const textareaRef    = useRef(null);
@@ -319,12 +323,19 @@
             }
             if (!textToAsk || !textToAsk.trim() || isLoading) return;
 
-            // Figure out which file we are talking about
-            const currentFile = documents.length > 0 ? documents[documents.length - 1].name : "";
-
-            if (!currentFile) {
+            // Resolve which files to query
+            if (documents.length === 0) {
                 setMessages(prev => [...prev, { role: 'ai', content: "⚠️ Please upload a document first!", citations: [], id: Date.now() }]);
                 return;
+            }
+
+            // askAll → pass filenames=ALL (no filter, searches everything)
+            // selectedFiles → pass selected filenames
+            // fallback → use last uploaded file (backward-compat UX)
+            let filenamesToQuery;
+            if (!askAll) {
+                const selected = documents.filter(d => selectedFiles.has(d.id)).map(d => d.name);
+                filenamesToQuery = selected.length > 0 ? selected : [documents[documents.length - 1].name];
             }
 
             setInput('');
@@ -335,12 +346,13 @@
             setIsLoading(true);
 
             try {
-                const response = await VaultAPI.askQuestion(textToAsk, settings, currentFile);
+                const response = await VaultAPI.askQuestion(textToAsk, settings, filenamesToQuery, askAll);
                 const aiMsg = {
                     role: 'ai',
                     content: response.answer,
                     citations: response.citations || [],
                     groundingScore: response.groundingScore ?? null,
+                    chunkCount: response.chunkCount ?? null,
                     id: Date.now() + 1
                 };
                 setMessages(prev => {
@@ -401,6 +413,13 @@
                         <div className="p-5 flex flex-col h-full overflow-hidden">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-sm font-bold text-on-surface">Knowledge Base</h2>
+                                <button onClick={() => setAskAll(p => !p)}
+                                        title={askAll ? "Querying ALL documents — click to use selection" : "Click to query all documents"}
+                                        className={`text-[9px] px-2 py-1 rounded-lg font-bold transition-colors uppercase tracking-wide ${
+                                            askAll ? 'bg-primary/20 text-primary border border-primary/30' : 'bg-[#171f33] text-slate-500 hover:text-slate-300'
+                                        }`}>
+                                    {askAll ? '⊕ All Docs' : '◎ Select'}
+                                </button>
                             </div>
 
                             {/* Drop Zone */}
@@ -458,7 +477,20 @@
                                             {documents.map(doc => {
                                                 const { icon, color, bg } = getFileIcon(doc.name);
                                                 return (
-                                                    <div key={doc.id} className="p-3 bg-[#171f33] rounded-xl flex items-center gap-3 group hover:bg-[#1d2640] transition-colors">
+                                                    <div key={doc.id}
+                                                         onClick={() => !askAll && setSelectedFiles(prev => { const n = new Set(prev); n.has(doc.id) ? n.delete(doc.id) : n.add(doc.id); return n; })}
+                                                         className={`p-3 rounded-xl flex items-center gap-3 group transition-colors cursor-pointer ${
+                                                             !askAll && selectedFiles.has(doc.id)
+                                                                 ? 'bg-primary/10 border border-primary/30'
+                                                                 : 'bg-[#171f33] hover:bg-[#1d2640] border border-transparent'
+                                                         }`}>
+                                                        {!askAll && (
+                                                            <input type="checkbox" readOnly
+                                                                   checked={selectedFiles.has(doc.id)}
+                                                                   onClick={e => e.stopPropagation()}
+                                                                   onChange={() => setSelectedFiles(prev => { const n = new Set(prev); n.has(doc.id) ? n.delete(doc.id) : n.add(doc.id); return n; })}
+                                                                   className="w-3 h-3 accent-primary flex-shrink-0" />
+                                                        )}
                                                         <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center flex-shrink-0`}>
                                                             <Icon name={icon} className={`${color} text-sm`} />
                                                         </div>
@@ -554,6 +586,12 @@
                                                         </span>
                                                     );
                                                 })()}
+                                                {msg.chunkCount != null && msg.chunkCount > 0 && (
+                                                    <span title="Number of document chunks that passed CRAG evaluation"
+                                                          className="text-[9px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide cursor-help">
+                                                        {msg.chunkCount} chunk{msg.chunkCount !== 1 ? 's' : ''} verified
+                                                    </span>
+                                                )}
                                             </div>
                                             <div className={`max-w-[90%] rounded-2xl rounded-tl-none p-5 border-l-4 ${
                                                 msg.isError ? 'bg-red-900/20 border-red-500/40' : 'bg-[#171f33] border-tertiary'
@@ -594,7 +632,7 @@
                                         <div className="w-6 h-6 rounded bg-primary-container/20 flex items-center justify-center">
                                             <Icon name="auto_awesome" className="text-primary text-xs pulse-soft" fill />
                                         </div>
-                                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest">CRAG evaluating sources…</span>
+                                        <span className="text-[10px] font-bold text-primary uppercase tracking-widest">HyDE → Retrieve → Batch CRAG…</span>
                                     </div>
                                     <div className="bg-[#171f33] rounded-2xl rounded-tl-none p-5 max-w-[55%]">
                                         <div className="flex items-center gap-3">
@@ -603,7 +641,7 @@
                                                     <div key={d} className="w-2 h-2 bg-primary/60 rounded-full dot-bounce" style={{ animationDelay: `${d}ms` }}></div>
                                                 ))}
                                             </div>
-                                            <span className="text-xs text-on-surface-variant">Grading retrieved chunks for accuracy…</span>
+                                            <span className="text-xs text-on-surface-variant">Batch-grading all chunks in one LLM call…</span>
                                         </div>
                                     </div>
                                 </div>
@@ -910,12 +948,12 @@
                                                 {local.similarityThreshold.toFixed(2)}
                                             </span>
                                         </div>
-                                        <input type="range" min="0.40" max="0.95" step="0.01"
+                                        <input type="range" min="0.10" max="0.95" step="0.01"
                                                value={local.similarityThreshold}
                                                onChange={e => setLocal(p => ({ ...p, similarityThreshold: parseFloat(e.target.value) }))}
                                                className="w-full h-1.5 bg-[#2d3449] rounded-lg appearance-none cursor-pointer" />
                                         <div className="flex justify-between text-[10px] text-slate-600 mt-1">
-                                            <span>Broad (0.40)</span><span>Strict (0.95)</span>
+                                            <span>Broad (0.10)</span><span>Strict (0.95)</span>
                                         </div>
                                     </div>
                                     <div>
@@ -979,8 +1017,11 @@
                                         ['Embedding Model',  'mxbai-embed-large 1024d'],
                                         ['Vector Database',  'ChromaDB 0.4.24'],
                                         ['Framework',        'Spring Boot 4 + LangChain4j'],
-                                        ['Document Parser',  'PDFBox 2.x + Apache Tika'],
-                                        ['CRAG',             '2-gate + re-rank + multi-query'],
+                                        ['PDF Parser',       'PDFBox 2.x + tabula-java'],
+                                        ['DOCX Parser',      'Apache POI (table-aware)'],
+                                        ['Other Formats',    'Apache Tika'],
+                                        ['OCR',              'Tesseract 5 via tess4j'],
+                                        ['CRAG',             'Batch 1-call + HyDE retrieval'],
                                     ].map(([k, v]) => (
                                         <div key={k} className="flex justify-between">
                                             <span className="text-slate-600">{k}</span>
@@ -994,14 +1035,14 @@
                                 <h4 className="text-sm font-bold mb-4">CRAG Pipeline</h4>
                                 <div className="space-y-3">
                                     {[
-                                        'Expand query → 3 paraphrases',
-                                        'Embed with mxbai-embed-large prefix',
-                                        'Union results, deduplicate chunks',
-                                        'CRAG Gate 1: reject TOC / topic mentions',
-                                        'CRAG Gate 2: require extractable fact',
-                                        'Re-rank verified chunks by relevance',
+                                        'HyDE: generate hypothetical document passage',
+                                        'Embed HyDE passage (asymmetric: passage-encoder path)',
+                                        'Retrieve top-K chunks (multi-file filter optional)',
+                                        'Batch CRAG: score all chunks in 1 LLM call (1–5)',
+                                        'Keep chunks ≥ 4, sort by score desc (replaces re-rank)',
                                         'Synthesize with inline quote requirement',
-                                        'Compute grounding score (0–100%)'
+                                        'Compute grounding score (0–100%)',
+                                        'Return answer + citations + chunkCount badge'
                                     ].map((step, i) => (
                                         <div key={i} className="flex items-center gap-3">
                                             <div className="w-5 h-5 rounded-full bg-primary-container/20 flex items-center justify-center flex-shrink-0">

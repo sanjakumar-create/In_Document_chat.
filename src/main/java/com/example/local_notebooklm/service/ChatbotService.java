@@ -1,6 +1,7 @@
 package com.example.local_notebooklm.service;
 
 import com.example.local_notebooklm.dto.ChatResponse;
+import com.example.local_notebooklm.inference.distributed.router.InferenceServiceAdapter;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
@@ -11,13 +12,15 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.store.embedding.filter.Filter;
+import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey;
@@ -25,13 +28,52 @@ import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metad
 @Service
 public class ChatbotService {
 
+    // Classifies the user's query so the pipeline can adapt thresholds and HyDE strategy.
+    // SYNTHESIS — summarize, overview, key points: skip HyDE, lower CRAG threshold to 3.
+    // CODE_SEARCH — short/concept queries on code docs: use code-focused HyDE, lower CRAG.
+    // FACTOID — everything else: standard prose HyDE, CRAG threshold 4 (unchanged from v3).
+    private enum QueryType { SYNTHESIS, CODE_SEARCH, FACTOID }
+
+    /**
+     * Carries a query variant alongside a flag indicating how it should be embedded.
+     *
+     * isDocumentPassage = true  → embed WITHOUT instruction prefix (passage space).
+     *   Used for HyDE-generated passages. mxbai-embed-large stores document chunks with
+     *   no prefix (passage space). A HyDE passage is a fake document — it should sit in
+     *   the SAME space as real chunks so similarity is meaningful.
+     *
+     * isDocumentPassage = false → embed WITH instruction prefix (query space).
+     *   Used for raw questions, multi-query paraphrases, and synthesis anchor strings.
+     *   mxbai-embed-large is trained to match query-space vectors to passage-space vectors.
+     */
+    private record QueryVariant(String text, boolean isDocumentPassage) {}
+
     private final ChatLanguageModel llm;
+    private final InferenceServiceAdapter inferenceAdapter;
     private final EmbeddingModel    embeddingModel;
     private final EmbeddingStore<TextSegment> embeddingStore;
 
+    @Value("${rag.query-expansion.mode:hyde}")
+    private String queryExpansionMode;
+
+    @Value("${rag.crag.batch.min-score:4}")
+    private int cragMinScore;
+
+    @Value("${rag.crag.batch.min-score.synthesis:3}")
+    private int cragMinScoreSynthesis;
+
+    @Value("${rag.crag.batch.min-score.code:3}")
+    private int cragMinScoreCode;
+
+    @Value("${rag.retrieval.min-score.relax-for-synthesis:0.55}")
+    private double relaxMinScoreSynthesis;
+
+    @Value("${rag.retrieval.min-score.relax-for-code:0.55}")
+    private double relaxMinScoreCode;
+
     // ── Per-session isolated memory ───────────────────────────────────────────
-    // Each browser tab / user gets its own 20-message rolling window.
-    // Sessions idle for > 30 minutes are automatically evicted.
+    // Each browser tab gets its own 20-message rolling window keyed by UUID sessionId.
+    // Sessions idle > 30 minutes are automatically evicted by a background scheduler.
     private static class SessionEntry {
         final ChatMemory memory      = MessageWindowChatMemory.withMaxMessages(20);
         volatile long    lastAccessed = System.currentTimeMillis();
@@ -39,16 +81,32 @@ public class ChatbotService {
     private final ConcurrentHashMap<String, SessionEntry> sessions = new ConcurrentHashMap<>();
     private final ScheduledExecutorService evictionScheduler;
 
+    // Bounded thread pool for parallel embedding calls (one per query variant).
+    // Ollama processes one request at a time, so 4 threads queue requests without flooding.
+    private final ExecutorService retrievalPool = Executors.newFixedThreadPool(4);
+
     public ChatbotService(ChatLanguageModel chatLanguageModel,
+                          InferenceServiceAdapter inferenceAdapter,
                           EmbeddingModel embeddingModel,
                           EmbeddingStore<TextSegment> embeddingStore) {
         this.llm            = chatLanguageModel;
+        this.inferenceAdapter = inferenceAdapter;
         this.embeddingModel = embeddingModel;
         this.embeddingStore = embeddingStore;
 
         this.evictionScheduler = Executors.newSingleThreadScheduledExecutor();
         evictionScheduler.scheduleAtFixedRate(this::evictExpiredSessions, 5, 5, TimeUnit.MINUTES);
     }
+
+    @PreDestroy
+    public void shutdown() {
+        retrievalPool.shutdown();
+        evictionScheduler.shutdown();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Session management
+    // ─────────────────────────────────────────────────────────────────────────
 
     private ChatMemory getSession(String sessionId) {
         SessionEntry entry = sessions.compute(sessionId, (id, existing) -> {
@@ -69,130 +127,315 @@ public class ChatbotService {
                           before - sessions.size(), sessions.size());
     }
 
-    // ── Step A: Multi-query expansion ────────────────────────────────────────
-    // Why: a single embedding query only retrieves chunks that are semantically
-    // similar to the exact wording used. If the user asks "prerequisites" but
-    // the document says "before enrolling, students should...", the single query
-    // misses it. Generating 3 paraphrases and unioning the results captures
-    // much more of the relevant content.
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step A: Query expansion — HyDE | multi-query | none
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Classifies the query into SYNTHESIS, CODE_SEARCH, or FACTOID.
+     * Used to select the right HyDE strategy and CRAG threshold. Zero LLM calls.
+     *
+     * SYNTHESIS: summary/overview requests — skip HyDE, use raw question + broad anchors
+     *            so retrieval covers the whole document rather than fixating on one topic.
+     * CODE_SEARCH: very short queries (≤3 words) — likely targeting a code concept;
+     *              use a code-snippet HyDE so the embedding lands in the code vector space.
+     * FACTOID: everything else — standard prose HyDE (original v3 behaviour).
+     */
+    private QueryType classifyQuery(String question) {
+        String q = question.toLowerCase().trim();
+        if (q.matches(".*(summarize|summarise|overview|outline|explain the|describe the|" +
+                      "tell me about|what does (this|the) document|what is (this|the) document|" +
+                      "key (points|topics)|main (points|topics)|topics covered).*")) {
+            return QueryType.SYNTHESIS;
+        }
+        // ≤5 words covers "what is list in python", "explain python dict", etc.
+        if (q.split("\\s+").length <= 5) {
+            return QueryType.CODE_SEARCH;
+        }
+        return QueryType.FACTOID;
+    }
+
+    /**
+     * Dispatches to the configured query expansion strategy, adapted per query type.
+     *
+     * HyDE (Hypothetical Document Embedding): asks Gemma 2 to write a short passage
+     * that would appear in a document and directly answer the question. That passage is
+     * then embedded instead of the raw question. Because mxbai-embed-large is asymmetric
+     * (query encoder ≠ passage encoder), embedding a fake document passage produces a
+     * vector much closer to real passage vectors than embedding the question directly.
+     * This dramatically improves retrieval recall.
+     *
+     * Reference: Gao et al. 2022 — "Precise Zero-Shot Dense Retrieval without Relevance Labels"
+     * (https://arxiv.org/abs/2212.10496)
+     *
+     * Adaptations by query type (hyde mode only):
+     *   SYNTHESIS   — bypass HyDE (no LLM call); use raw question + two broad anchor strings
+     *                 so retrieval spreads across the whole document. 2 LLM calls total.
+     *   CODE_SEARCH — generate a code-snippet HyDE (stays in code embedding space) + raw question
+     *                 as safety fallback. Still 1 LLM call.
+     *   FACTOID     — original prose HyDE (unchanged). 1 LLM call.
+     */
+    private List<QueryVariant> queryVariants(String question, QueryType type) {
+        return switch (queryExpansionMode) {
+            case "hyde" -> switch (type) {
+                // SYNTHESIS: skip HyDE entirely. Raw question + broad anchors spread retrieval
+                // across the whole document. All embedded as queries (query space).
+                case SYNTHESIS -> List.of(
+                    new QueryVariant(question, false),
+                    new QueryVariant("contents topics summary overview", false),
+                    new QueryVariant("main points key concepts introduction", false));
+                // CODE_SEARCH: code-snippet HyDE embedded as a DOCUMENT (passage space, no prefix)
+                // so it sits next to real code chunks. Raw question included as query-space fallback.
+                case CODE_SEARCH -> List.of(
+                    new QueryVariant(generateHypotheticalCodePassage(question), true),
+                    new QueryVariant(question, false));
+                // FACTOID: prose HyDE embedded as a DOCUMENT (passage space, no prefix).
+                // Fixes the original bug where HyDE passages got the query prefix,
+                // pushing them into query space far from the stored passage-space chunks.
+                default -> List.of(new QueryVariant(generateHypotheticalPassage(question), true));
+            };
+            case "multi-query" -> expandQuery(question).stream()
+                .map(q -> new QueryVariant(q, false))
+                .collect(Collectors.toList());
+            default -> List.of(new QueryVariant(question, false));  // "none"
+        };
+    }
+
+    private String generateHypotheticalPassage(String question) {
+        String prompt =
+            "Write a short factual paragraph (3–5 sentences) that would appear in a document " +
+            "and directly answers the following question. Use domain-appropriate language. " +
+            "Write as if extracted from a document — not as a reply to the user.\n\n" +
+            "Question: " + question + "\n\nPassage:";
+        try {
+            return resolveChatModel().generate(prompt).trim();
+        } catch (Exception e) {
+            System.out.println("[QUERY] HyDE failed, using raw question: " + e.getMessage());
+            return question;
+        }
+    }
+
+    /**
+     * Code-focused HyDE for CODE_SEARCH queries.
+     * Generates a short code snippet with an inline comment. Because the output is code,
+     * its embedding lands in the code vector space — much closer to real code chunks than
+     * a prose HyDE passage would be. Falls back to raw question on failure.
+     */
+    private String generateHypotheticalCodePassage(String question) {
+        String prompt =
+            "Write a SHORT code example (3–8 lines) with a one-line comment that would appear " +
+            "in a programming tutorial document and directly demonstrates: " + question + "\n" +
+            "Write ONLY code and inline comments. No prose explanation.\n\nCode:";
+        try {
+            return resolveChatModel().generate(prompt).trim();
+        } catch (Exception e) {
+            System.out.println("[QUERY] Code HyDE failed, using raw question: " + e.getMessage());
+            return question;
+        }
+    }
+
     private List<String> expandQuery(String question) {
         String prompt =
             "Generate exactly 3 different phrasings of this question for document search.\n" +
             "Use different vocabulary but ask for the same information.\n" +
-            "Output exactly 3 lines. No numbering, no bullet points, no explanations.\n\n" +
+            "Output exactly 3 lines. No numbering, no bullets, no explanations.\n\n" +
             "Question: " + question;
         try {
-            String[] lines = llm.generate(prompt).trim().split("\n");
+            String[] lines = resolveChatModel().generate(prompt).trim().split("\n");
             List<String> variants = Arrays.stream(lines)
                 .map(String::trim)
                 .filter(s -> !s.isEmpty() && s.length() > 5)
                 .limit(3)
                 .collect(Collectors.toList());
-            variants.add(question);  // always include the original
+            variants.add(question);
             System.out.println("[QUERY] Expanded to " + variants.size() + " variants");
             return variants;
         } catch (Exception e) {
-            System.out.println("[QUERY] Expansion failed, using original: " + e.getMessage());
+            System.out.println("[QUERY] Multi-query failed, using original: " + e.getMessage());
             return List.of(question);
         }
     }
 
-    // ── Step B: Retrieve chunks for one query ─────────────────────────────────
-    // The instruction prefix "Represent this sentence for searching relevant passages: "
-    // is required by mxbai-embed-large. This model is trained for ASYMMETRIC retrieval:
-    // the query and the document passage go through different encoding paths, which
-    // dramatically improves retrieval accuracy over symmetric models like nomic-embed-text.
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step B: Parallel retrieval with multi-file filter support
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Retrieves chunks for multiple query variants in parallel using a bounded thread pool.
+     * Results are deduplicated by chunk text using LinkedHashMap (preserving first-seen order).
+     *
+     * filenames == null → no filter, searches ALL ingested documents
+     * filenames.size() == 1 → isEqualTo filter (original single-file behavior)
+     * filenames.size() > 1 → isIn filter (ChromaDB $in operator, confirmed in 0.4.24)
+     */
+    private List<EmbeddingMatch<TextSegment>> retrieveChunksParallel(
+            List<QueryVariant> variants, double minScore, int maxResults, List<String> filenames) {
+
+        List<CompletableFuture<List<EmbeddingMatch<TextSegment>>>> futures = variants.stream()
+            .map(v -> CompletableFuture.supplyAsync(
+                () -> retrieveChunks(v, minScore, maxResults, filenames),
+                retrievalPool))
+            .collect(Collectors.toList());
+
+        Map<String, EmbeddingMatch<TextSegment>> seen = new LinkedHashMap<>();
+        futures.stream()
+            .map(CompletableFuture::join)
+            .flatMap(List::stream)
+            .forEach(m -> seen.putIfAbsent(m.embedded().text(), m));
+
+        return new ArrayList<>(seen.values());
+    }
+
+    /**
+     * Single-variant retrieval. Applies the mxbai-embed-large instruction prefix only for
+     * query-space variants (raw questions, multi-query paraphrases, synthesis anchors).
+     * HyDE passages (isDocumentPassage=true) are embedded WITHOUT the prefix so they land
+     * in passage space — the same space as the stored document chunks. This is the correct
+     * way to use HyDE with an asymmetric embedding model: the fake document should be
+     * comparable to real documents, not to queries.
+     */
     private List<EmbeddingMatch<TextSegment>> retrieveChunks(
-            String query, double minScore, int maxResults, String filename) {
+            QueryVariant variant, double minScore, int maxResults, List<String> filenames) {
 
-        String prefixedQuery = "Represent this sentence for searching relevant passages: " + query;
+        String textToEmbed = variant.isDocumentPassage()
+            ? variant.text()
+            : "Represent this sentence for searching relevant passages: " + variant.text();
         dev.langchain4j.data.embedding.Embedding queryEmbedding =
-            embeddingModel.embed(prefixedQuery).content();
+            embeddingModel.embed(textToEmbed).content();
 
-        EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+        var builder = EmbeddingSearchRequest.builder()
             .queryEmbedding(queryEmbedding)
             .maxResults(maxResults)
-            .minScore(minScore)
-            .filter(metadataKey("source_file").isEqualTo(filename))
-            .build();
-        return embeddingStore.search(request).matches();
+            .minScore(minScore);
+
+        if (filenames != null && !filenames.isEmpty()) {
+            Filter filter = filenames.size() == 1
+                ? metadataKey("source_file").isEqualTo(filenames.get(0))
+                : metadataKey("source_file").isIn(filenames);
+            builder.filter(filter);
+        }
+        // null filenames → no filter → queries entire ChromaDB collection
+
+        return embeddingStore.search(builder.build()).matches();
     }
 
-    // ── Step C: CRAG — strict two-gate evaluation ─────────────────────────────
-    // Why two gates?
-    // Gate 1 rejects vague topic mentions and TOC entries.
-    // Gate 2 confirms that a specific extractable fact exists in the passage.
-    // Together they prevent the most common failure mode: a TOC line saying
-    // "Regular Expressions .... 47" passing the evaluation and causing the model
-    // to synthesise regex content from its training knowledge.
-    private boolean cragApprove(String chunk, String question) {
-        // Gate 1: Specific content, not just a topic mention
-        String gate1 = String.format(
-            "You are a strict document relevance judge.\n\n" +
-            "Question: %s\n\n" +
-            "Document Passage:\n%s\n\n" +
-            "Does this passage contain SPECIFIC FACTUAL INFORMATION that directly helps answer the question?\n" +
-            "Rules:\n" +
-            "- A table of contents entry scores NO\n" +
-            "- A section heading without explanation scores NO\n" +
-            "- A passage that only mentions a topic name without explaining it scores NO\n" +
-            "- A passage with actual content, definitions, or explanations scores YES\n\n" +
-            "Reply with EXACTLY one word: YES or NO",
-            question, chunk);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step C: Batch CRAG evaluation (replaces 2-gate per-chunk + rerankChunks)
+    // ─────────────────────────────────────────────────────────────────────────
 
-        String grade1 = llm.generate(gate1).trim().toUpperCase();
-        if (!grade1.equals("YES")) return false;
+    /**
+     * Evaluates ALL chunks in a single LLM call, returning relevance scores 1–5.
+     *
+     * Why batch instead of per-chunk?
+     *   v2 used 2 LLM calls per chunk: for 10 chunks = 20 calls + 10 re-rank calls = 30 total.
+     *   Batch CRAG collapses all of that into 1 call regardless of chunk count.
+     *   This is the primary speed improvement: 32 LLM calls → 3 LLM calls per query.
+     *
+     * Score semantics:
+     *   5 = directly answers the question with specific facts
+     *   4 = mostly answers, contains relevant content
+     *   3 = partially relevant
+     *   2 = vaguely related
+     *   1 = irrelevant or just a topic mention / TOC entry
+     *
+     * Chunks scoring >= cragMinScore (default 4) are kept, sorted by score desc.
+     * This eliminates the need for a separate re-ranking step — CRAG scores serve double duty.
+     *
+     * On any JSON parse failure: approves all chunks with score 3 (fail-open fallback).
+     */
+    private Map<String, Integer> batchCragEvaluate(List<String> chunks, String question,
+                                                     QueryType type) {
+        if (chunks.isEmpty()) return Collections.emptyMap();
 
-        // Gate 2: Extractable specific fact
-        String gate2 = String.format(
-            "Based ONLY on the following passage, does it contain an extractable specific fact " +
-            "or explanation that answers: \"%s\"?\n\n" +
-            "Passage:\n%s\n\n" +
-            "Reply with EXACTLY one word: YES or NO",
-            question, chunk);
-
-        return llm.generate(gate2).trim().toUpperCase().equals("YES");
-    }
-
-    // ── Step D: Re-rank approved chunks by relevance score ───────────────────
-    // After CRAG approves chunks, they arrive in vector-similarity order —
-    // not necessarily the most relevant first. The synthesis model gives more
-    // weight to content at the start of its context window (primacy effect),
-    // so placing the highest-relevance chunks first produces better answers.
-    private List<String> rerankChunks(List<String> chunks, String question) {
-        if (chunks.size() <= 2) return chunks;
-
-        record Scored(String text, int score) {}
-        List<Scored> scored = new ArrayList<>();
-
-        for (String chunk : chunks) {
-            String scorePrompt = String.format(
-                "Rate how directly this passage answers the question.\n" +
-                "Question: %s\n" +
-                "Passage: %s\n\n" +
-                "Reply with ONLY a single digit: 5 (directly answers), 4 (mostly), " +
-                "3 (partially), 2 (vaguely related), 1 (irrelevant).",
-                question, chunk.substring(0, Math.min(chunk.length(), 600)));
-            try {
-                String raw = llm.generate(scorePrompt).trim().replaceAll("[^1-5]", "");
-                int s = raw.isEmpty() ? 3 : Integer.parseInt(String.valueOf(raw.charAt(0)));
-                scored.add(new Scored(chunk, s));
-            } catch (Exception e) {
-                scored.add(new Scored(chunk, 3));
-            }
+        // Build numbered passage list (truncated to 300 chars to stay within context)
+        StringBuilder passages = new StringBuilder();
+        for (int i = 0; i < chunks.size(); i++) {
+            String preview = chunks.get(i).substring(0, Math.min(chunks.get(i).length(), 300));
+            passages.append("[").append(i + 1).append("] ").append(preview).append("\n\n");
         }
 
-        scored.sort(Comparator.comparingInt(Scored::score).reversed());
-        return scored.stream().map(Scored::text).collect(Collectors.toList());
+        // Rubric is adapted per query type so the LLM scores appropriately:
+        // SYNTHESIS — individual passages contribute content, not full answers; 3+ should pass.
+        // CODE_SEARCH — code examples demonstrate concepts; a usage example scores 4, not 2.
+        // FACTOID — original rubric unchanged.
+        String rubric = switch (type) {
+            case SYNTHESIS ->
+                "5 = rich content — multiple facts, definitions, or concepts\n" +
+                "4 = solid content — at least one substantial concept or fact\n" +
+                "3 = some content — partial concept or supporting detail\n" +
+                "2 = minimal — mostly structural (headers, transitions, navigation)\n" +
+                "1 = no useful content — TOC entry, page number, blank\n";
+            case CODE_SEARCH ->
+                "5 = directly shows a code example or precise definition of the concept\n" +
+                "4 = shows related code or a partial explanation\n" +
+                "3 = mentions the concept or shows adjacent usage\n" +
+                "2 = vaguely related or an unrelated code example\n" +
+                "1 = irrelevant\n";
+            default ->
+                "5 = directly answers with specific facts\n" +
+                "4 = mostly answers, contains relevant content\n" +
+                "3 = partially relevant\n" +
+                "2 = vaguely related — mentions the topic but no specific content\n" +
+                "1 = irrelevant — table of contents entry, heading only, or off-topic\n";
+        };
+
+        String prompt =
+            "You are a relevance judge for a document Q&A system.\n" +
+            "Rate each numbered passage for how well it answers the question.\n\n" +
+            "Scoring:\n" +
+            rubric + "\n" +
+            "Question: " + question + "\n\n" +
+            passages.toString() +
+            "Output ONLY a JSON integer array with exactly " + chunks.size() + " scores.\n" +
+            "Example for " + chunks.size() + " passages: " +
+            buildExampleArray(chunks.size()) + "\n" +
+            "No explanation. ONLY the array.";
+
+        Map<String, Integer> scores = new LinkedHashMap<>();
+        try {
+            String raw = resolveChatModel().generate(prompt).trim();
+            // Extract the integer array even if Gemma 2 adds preamble text
+            Matcher m = Pattern.compile("\\[([\\d,\\s]+)\\]").matcher(raw);
+            if (m.find()) {
+                String[] parts = m.group(1).split(",");
+                for (int i = 0; i < Math.min(parts.length, chunks.size()); i++) {
+                    int score = Integer.parseInt(parts[i].trim());
+                    scores.put(chunks.get(i), Math.max(1, Math.min(5, score)));
+                }
+            } else {
+                System.out.println("[CRAG] Batch parse failed (no array found), approving all: " + raw.substring(0, Math.min(raw.length(), 100)));
+                chunks.forEach(c -> scores.put(c, 3));
+            }
+        } catch (Exception e) {
+            System.out.println("[CRAG] Batch evaluation exception, approving all: " + e.getMessage());
+            chunks.forEach(c -> scores.put(c, 3));
+        }
+
+        // Fill missing entries (if LLM returned fewer scores than chunks)
+        chunks.forEach(c -> scores.putIfAbsent(c, 3));
+        return scores;
     }
 
-    // ── Step E: Grounding score ───────────────────────────────────────────────
-    // Measures what fraction of the meaningful words in the final answer also
-    // appear in the retrieved context. If the model is answering from the
-    // document, most content words will match. If it hallucinates from training
-    // knowledge, many words will NOT be in the context, producing a low score.
-    // This is a lightweight proxy — not a perfect NLI check — but it runs in
-    // milliseconds with no extra model call.
+    private String buildExampleArray(int n) {
+        int[] sample = {4, 2, 5, 1, 3};
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(sample[i % sample.length]);
+        }
+        return sb.append("]").toString();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step D: Grounding score
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Lightweight proxy metric: fraction of meaningful answer words that appear in context.
+     * If the model answers from the document, most content words will be present in context.
+     * If it hallucinates from training data, words will be absent, producing a low score.
+     * No extra LLM call required — runs in milliseconds.
+     */
     private double computeGroundingScore(String answer, String context) {
         Set<String> stopwords = Set.of(
             "the","a","an","is","are","was","were","be","been","it","this","that","and","or",
@@ -217,76 +460,125 @@ public class ChatbotService {
         return Math.min(1.0, (double) supported / total);
     }
 
-    // ── Main pipeline ─────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Main pipeline
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Full CRAG pipeline: HyDE → Retrieve → Batch CRAG → Synthesize → Score.
+     *
+     * filenames: list of source_file values to search within.
+     *   null or empty = search ALL ingested documents (cross-file mode)
+     *   single entry  = single-file mode (original behavior)
+     *   multiple      = multi-file mode using ChromaDB $in filter
+     */
     public ChatResponse askAdvancedQuestion(String question, double minScore, int maxResults,
-                                             String filename, String sessionId) {
-        System.out.println("[QUERY] \"" + question + "\" | file=" + filename + " | session=" + sessionId);
+                                             List<String> filenames, String sessionId) {
+        String fileLabel = (filenames == null || filenames.isEmpty()) ? "ALL" : String.join(", ", filenames);
+        System.out.println("[QUERY] \"" + question + "\" | files=" + fileLabel + " | session=" + sessionId);
+        System.out.println("[QUERY] Mode: " + queryExpansionMode);
+
+        // Classify query to select adaptive thresholds and HyDE strategy
+        QueryType queryType = classifyQuery(question);
+        System.out.println("[QUERY] Type: " + queryType);
+
+        // Relax similarity floor for synthesis/code queries:
+        // HyDE prose vs code chunks and broad-coverage synthesis both sit at lower cosine distance.
+        double effectiveMinScore = switch (queryType) {
+            case SYNTHESIS   -> Math.min(minScore, relaxMinScoreSynthesis);
+            case CODE_SEARCH -> Math.min(minScore, relaxMinScoreCode);
+            default          -> minScore;
+        };
+
+        // Use a lower CRAG approval threshold for synthesis/code:
+        // Score 3 = "partially relevant" is sufficient for chunks that contribute to a summary
+        // or demonstrate a code concept, even if they don't fully define it.
+        int effectiveCragMinScore = switch (queryType) {
+            case SYNTHESIS   -> cragMinScoreSynthesis;
+            case CODE_SEARCH -> cragMinScoreCode;
+            default          -> cragMinScore;
+        };
+
         ChatMemory memory = getSession(sessionId);
 
-        // A: Multi-query expansion
-        List<String> queryVariants = expandQuery(question);
+        // A: Query expansion (strategy varies by query type — see queryVariants)
+        List<QueryVariant> variants = queryVariants(question, queryType);
+        System.out.println("[QUERY] Variants: " + variants.size() +
+            " | hyde-passage=" + variants.stream().filter(QueryVariant::isDocumentPassage).count());
 
-        // B: Retrieve for all variants, deduplicate by chunk text
-        // LinkedHashMap preserves insertion order while deduplicating
-        Map<String, EmbeddingMatch<TextSegment>> uniqueChunks = new LinkedHashMap<>();
-        for (String variant : queryVariants) {
-            for (EmbeddingMatch<TextSegment> match : retrieveChunks(variant, minScore, maxResults, filename)) {
-                uniqueChunks.putIfAbsent(match.embedded().text(), match);
-            }
-        }
-        List<EmbeddingMatch<TextSegment>> rawChunks = new ArrayList<>(uniqueChunks.values());
-        System.out.println("[RETRIEVAL] " + rawChunks.size() + " unique chunks from " +
-                           queryVariants.size() + " queries");
+        // B: Parallel retrieval across all variants
+        List<EmbeddingMatch<TextSegment>> rawChunks =
+            retrieveChunksParallel(variants, effectiveMinScore, maxResults, filenames);
+        System.out.println("[RETRIEVAL] " + rawChunks.size() + " unique chunks retrieved" +
+            " (minScore=" + effectiveMinScore + ")");
 
-        // C: CRAG two-gate evaluation
-        List<String> verifiedChunks = new ArrayList<>();
-        List<String> citations      = new ArrayList<>();
-
-        for (EmbeddingMatch<TextSegment> match : rawChunks) {
-            String chunkText = match.embedded().text();
-            String pageNum   = match.embedded().metadata().getString("page_number");
-            String pageLabel = (pageNum != null && !pageNum.isEmpty()) ? " [Page " + pageNum + "]" : "";
-
-            boolean approved = cragApprove(chunkText, question);
-            if (approved) {
-                verifiedChunks.add(chunkText);
-                citations.add(chunkText + pageLabel);
-                System.out.println("[CRAG] APPROVED ✅" + pageLabel);
-            } else {
-                System.out.println("[CRAG] REJECTED ❌" + pageLabel);
-            }
-        }
-
-        // Fallback: no verified chunks
-        if (verifiedChunks.isEmpty()) {
-            String noData =
-                "The uploaded document does not contain sufficient information to answer this question.\n\n" +
-                "Suggestions:\n" +
-                "• Lower the Similarity Threshold in Settings (try 0.55)\n" +
-                "• Rephrase using words from the document\n" +
-                "• Check that the relevant section was ingested (re-upload if needed)";
+        if (rawChunks.isEmpty()) {
+            System.out.println("[RETRIEVAL] FAILED — 0 chunks above minScore=" + effectiveMinScore +
+                ". ChromaDB may be empty or all similarities below threshold.");
+            String noData = buildNoDataMessage(filenames);
             memory.add(AiMessage.from(noData));
-            return new ChatResponse(noData, List.of(), 0.0);
+            return new ChatResponse(noData, List.of(), 0.0, 0);
         }
 
-        // D: Re-rank
-        verifiedChunks = rerankChunks(verifiedChunks, question);
+        // C: Batch CRAG — one LLM call for all chunks, returns relevance scores 1-5
+        List<String> chunkTexts = rawChunks.stream()
+            .map(m -> m.embedded().text())
+            .collect(Collectors.toList());
 
-        // Build context string with page references
-        StringBuilder contextBuilder = new StringBuilder();
-        for (int i = 0; i < verifiedChunks.size(); i++) {
-            EmbeddingMatch<TextSegment> orig = uniqueChunks.get(verifiedChunks.get(i));
-            String pn = (orig != null) ? orig.embedded().metadata().getString("page_number") : null;
-            contextBuilder.append("[Passage ").append(i + 1);
-            if (pn != null && !pn.isEmpty()) contextBuilder.append(", Page ").append(pn);
-            contextBuilder.append("]\n").append(verifiedChunks.get(i)).append("\n\n---\n\n");
+        Map<String, Integer> scores = batchCragEvaluate(chunkTexts, question, queryType);
+
+        // Filter to approved chunks (score >= effectiveCragMinScore), sort by score descending
+        // Sorting by score replaces the separate rerankChunks() call from v2
+        List<Map.Entry<String, Integer>> approved = scores.entrySet().stream()
+            .filter(e -> e.getValue() >= effectiveCragMinScore)
+            .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+            .collect(Collectors.toList());
+
+        System.out.printf("[CRAG] Approved: %d / %d (min score: %d, type: %s)%n",
+                          approved.size(), chunkTexts.size(), effectiveCragMinScore, queryType);
+
+        if (approved.isEmpty()) {
+            System.out.println("[CRAG] FAILED — all " + chunkTexts.size() +
+                " chunks scored below " + effectiveCragMinScore +
+                ". Scores: " + scores.values());
+            String noData = buildNoDataMessage(filenames);
+            memory.add(AiMessage.from(noData));
+            return new ChatResponse(noData, List.of(), 0.0, 0);
+        }
+
+        // Build a lookup map from chunk text → original EmbeddingMatch (for metadata)
+        Map<String, EmbeddingMatch<TextSegment>> chunkIndex = rawChunks.stream()
+            .collect(Collectors.toMap(m -> m.embedded().text(), m -> m, (a, b) -> a));
+
+        // Build context string and citations list
+        List<String> verifiedChunkTexts = new ArrayList<>();
+        List<String> citations          = new ArrayList<>();
+        StringBuilder contextBuilder    = new StringBuilder();
+
+        for (int i = 0; i < approved.size(); i++) {
+            String chunkText = approved.get(i).getKey();
+            int    score     = approved.get(i).getValue();
+            verifiedChunkTexts.add(chunkText);
+
+            EmbeddingMatch<TextSegment> orig = chunkIndex.get(chunkText);
+            String sourceFile = orig != null ? orig.embedded().metadata().getString("source_file") : null;
+            String pageNum    = orig != null ? orig.embedded().metadata().getString("page_number")  : null;
+
+            // Citation format: "chunk text [filename.pdf, Page 12]" — includes filename for multi-file
+            String fileRef = sourceFile != null ? sourceFile : "unknown";
+            String pageRef = (pageNum != null && !pageNum.isEmpty()) ? ", Page " + pageNum : "";
+            citations.add(chunkText + " [" + fileRef + pageRef + "]");
+
+            // Context passage label includes source file and page for the synthesis prompt
+            contextBuilder.append("[Passage ").append(i + 1)
+                          .append(" from ").append(fileRef);
+            if (pageNum != null && !pageNum.isEmpty()) contextBuilder.append(", Page ").append(pageNum);
+            contextBuilder.append(", relevance=").append(score).append("]\n")
+                          .append(chunkText).append("\n\n---\n\n");
         }
         String context = contextBuilder.toString().trim();
 
-        // E: Grounded synthesis with mandatory inline citations
-        // The inline quote requirement forces the model to anchor every claim in the
-        // retrieved text. If it cannot find supporting words to quote, it cannot make
-        // the claim — this is the single most effective prompt-level hallucination guard.
+        // D: Grounded synthesis — inline quote requirement prevents hallucination
         String finalPrompt =
             "You are a precise document analysis assistant.\n\n" +
             "STRICT RULES — follow all of them:\n" +
@@ -301,10 +593,10 @@ public class ChatbotService {
             "Question: " + question + "\n\n" +
             "Answer (include inline passage quotes for each claim):";
 
-        System.out.println("[SYNTHESIS] Generating from " + verifiedChunks.size() + " verified chunks...");
-        String finalAnswer = llm.generate(finalPrompt);
+        System.out.println("[SYNTHESIS] Generating from " + verifiedChunkTexts.size() + " verified chunks...");
+        String finalAnswer = resolveChatModel().generate(finalPrompt);
 
-        // F: Grounding score
+        // E: Grounding score
         double groundingScore = computeGroundingScore(finalAnswer, context);
         System.out.printf("[GROUNDING] Score: %.2f (%s)%n", groundingScore,
             groundingScore >= 0.75 ? "HIGH" : groundingScore >= 0.50 ? "MEDIUM" : "LOW");
@@ -312,12 +604,36 @@ public class ChatbotService {
         memory.add(UserMessage.from(question));
         memory.add(AiMessage.from(finalAnswer));
 
-        return new ChatResponse(finalAnswer, citations, groundingScore);
+        return new ChatResponse(finalAnswer, citations, groundingScore, verifiedChunkTexts.size());
+    }
+
+    private String buildNoDataMessage(List<String> filenames) {
+        String scope = (filenames == null || filenames.isEmpty())
+            ? "the uploaded documents"
+            : String.join(", ", filenames);
+        return "The document does not contain sufficient information to answer this question.\n\n" +
+               "Searched in: " + scope + "\n\n" +
+               "Suggestions:\n" +
+               "• Lower the Similarity Threshold in Settings (try 0.55)\n" +
+               "• Rephrase using words likely in the document\n" +
+               "• Enable 'ALL DOCS' mode if the answer may be in a different uploaded file\n" +
+               "• Check that the relevant section was ingested (re-upload if needed)";
     }
 
     public void clearHistory(String sessionId) {
         SessionEntry entry = sessions.get(sessionId);
         if (entry != null) entry.memory.clear();
         System.out.println("[Session] Cleared: " + sessionId);
+    }
+
+    private ChatLanguageModel resolveChatModel() {
+        try {
+            return inferenceAdapter.resolveModel()
+                    .map(model -> (ChatLanguageModel) model)
+                    .orElse(llm);
+        } catch (Exception e) {
+            System.out.println("[QUERY] Distributed model resolution failed, using local: " + e.getMessage());
+            return llm;
+        }
     }
 }

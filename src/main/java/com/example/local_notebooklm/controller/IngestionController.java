@@ -7,6 +7,8 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @RestController
 @CrossOrigin(origins = "*") // <--- ADD THIS LINE TO FIX CORS!
@@ -61,6 +63,29 @@ public class IngestionController {
             return "❌ Error ingesting file: " + e.getMessage();
         }
     }
+    /**
+     * Batch upload — ingests multiple files in one request.
+     * POST /api/documents/upload-batch  (multipart/form-data, field name = "files")
+     * Returns a map of filename → "SUCCESS" or "ERROR: <message>"
+     */
+    @PostMapping("/upload-batch")
+    public Map<String, String> uploadBatch(@RequestParam("files") MultipartFile[] files) {
+        Map<String, String> results = new LinkedHashMap<>();
+        for (MultipartFile file : files) {
+            String name = file.getOriginalFilename() != null ? file.getOriginalFilename() : "upload";
+            try {
+                Path tmp = Files.createTempFile("vault-", "-" + name);
+                Files.write(tmp, file.getBytes());
+                ingestionService.ingestFile(tmp, name);
+                Files.deleteIfExists(tmp);
+                results.put(name, "SUCCESS");
+            } catch (Exception e) {
+                results.put(name, "ERROR: " + e.getMessage());
+            }
+        }
+        return results;
+    }
+
     @DeleteMapping("/delete")
     public String deleteDocument(@RequestParam String filename) {
         try {

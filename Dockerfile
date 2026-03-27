@@ -21,10 +21,15 @@ RUN mvn clean package -DskipTests -B --no-transfer-progress
 # ─────────────────────────────────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine
 
+# Install Tesseract OCR and English language data (~30 MB).
+# Required by tess4j for OCR on image-only PDF pages.
+# The data files land at /usr/share/tessdata/ which matches ocr.tesseract.datapath default.
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
+
 WORKDIR /app
 
 COPY --from=build /app/target/*.jar app.jar
 
-EXPOSE 8080
+EXPOSE 8081
 
 ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-jar", "app.jar"]

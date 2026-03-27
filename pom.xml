@@ -58,6 +58,41 @@
 			<version>2.0.29</version>
 		</dependency>
 
+		<!-- tabula-java — structural PDF table extraction → Markdown tables       -->
+		<!-- Uses PDFBox 2.x internally (same version as above — no conflict)      -->
+		<dependency>
+			<groupId>technology.tabula</groupId>
+			<artifactId>tabula</artifactId>
+			<version>1.0.5</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-simple</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<!-- Apache POI — DOCX table extraction (XWPFTable → Markdown)            -->
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>5.2.5</version>
+		</dependency>
+
+		<!-- tess4j — Java JNI binding for Tesseract OCR (image-heavy PDF pages)  -->
+		<!-- Requires: apk add tesseract-ocr tesseract-ocr-data-eng in Dockerfile -->
+		<dependency>
+			<groupId>net.sourceforge.tess4j</groupId>
+			<artifactId>tess4j</artifactId>
+			<version>5.11.0</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.apache.logging.log4j</groupId>
+					<artifactId>log4j-slf4j-impl</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
 		<!-- Spring Boot web -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
