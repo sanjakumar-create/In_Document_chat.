@@ -56,7 +56,7 @@ public class ChatbotService {
     @Value("${rag.query-expansion.mode:hyde}")
     private String queryExpansionMode;
 
-    @Value("${rag.crag.batch.min-score:4}")
+    @Value("${rag.crag.batch.min-score:3}")
     private int cragMinScore;
 
     @Value("${rag.crag.batch.min-score.synthesis:3}")
@@ -65,11 +65,56 @@ public class ChatbotService {
     @Value("${rag.crag.batch.min-score.code:3}")
     private int cragMinScoreCode;
 
-    @Value("${rag.retrieval.min-score.relax-for-synthesis:0.55}")
+    @Value("${rag.retrieval.min-score.relax-for-synthesis:0.20}")
     private double relaxMinScoreSynthesis;
 
-    @Value("${rag.retrieval.min-score.relax-for-code:0.55}")
+    @Value("${rag.retrieval.min-score.relax-for-code:0.20}")
     private double relaxMinScoreCode;
+
+    @Value("${rag.retrieval.min-score.relax-for-factoid:0.20}")
+    private double relaxMinScoreFactoid;
+
+    // ── Embedding-based query classifier ─────────────────────────────────────
+    // Prototype sentences define each intent class. Centroids are computed ONCE
+    // at first query by embedding each prototype with mxbai-embed-large (the model
+    // already running for retrieval — zero extra hardware cost). Subsequent calls
+    // use the cached centroids for O(dim) cosine similarity — microseconds.
+    private static final List<String> SYNTHESIS_PROTOTYPES = List.of(
+        "summarize this document",
+        "give me an overview of this",
+        "what are the key points in this",
+        "tell me what this document is about",
+        "what are the main topics covered here",
+        "give me a summary of this doc",
+        "explain what this document contains",
+        "can you sum up this document",
+        "what is covered in this document",
+        "describe the contents of this"
+    );
+    private static final List<String> CODE_SEARCH_PROTOTYPES = List.of(
+        "show me a code example for this",
+        "how to implement this in code",
+        "what is the syntax for this",
+        "give me an example of how to use this",
+        "write code that demonstrates this concept",
+        "what does this function do",
+        "how do I code this in python"
+    );
+    private static final List<String> FACTOID_PROTOTYPES = List.of(
+        "how does this work in detail",
+        "what is the difference between these two things",
+        "explain the process step by step",
+        "what are the requirements for this feature",
+        "why does this behavior happen",
+        "what is the detailed explanation with examples",
+        "describe how this mechanism operates",
+        "what happens when this condition occurs"
+    );
+    // Cached centroids (loaded lazily on first query)
+    private volatile float[] synthesisCentroid  = null;
+    private volatile float[] codeSearchCentroid = null;
+    private volatile float[] factoidCentroid    = null;
+    private final Object centroidLock = new Object();
 
     // ── Per-session isolated memory ───────────────────────────────────────────
     // Each browser tab gets its own 20-message rolling window keyed by UUID sessionId.
@@ -132,23 +177,112 @@ public class ChatbotService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Classifies the query into SYNTHESIS, CODE_SEARCH, or FACTOID.
-     * Used to select the right HyDE strategy and CRAG threshold. Zero LLM calls.
+     * Classifies the query into SYNTHESIS, CODE_SEARCH, or FACTOID using
+     * embedding-based prototype matching. mxbai-embed-large is already loaded in
+     * Ollama for retrieval, so this adds zero hardware cost.
      *
-     * SYNTHESIS: summary/overview requests — skip HyDE, use raw question + broad anchors
-     *            so retrieval covers the whole document rather than fixating on one topic.
-     * CODE_SEARCH: very short queries (≤3 words) — likely targeting a code concept;
-     *              use a code-snippet HyDE so the embedding lands in the code vector space.
-     * FACTOID: everything else — standard prose HyDE (original v3 behaviour).
+     * On first call: embeds SYNTHESIS/CODE_SEARCH/FACTOID prototype sentences and
+     * averages them into per-class centroids (cached for the lifetime of the app).
+     * On every call: embeds the incoming question (~50ms), computes cosine similarity
+     * to each centroid, picks the highest.
+     *
+     * Advantages over regex:
+     *   - Handles typos: "summerize" scores high similarity to SYNTHESIS centroid
+     *   - Handles synonyms: "tldr", "recap", "sum it up" all match SYNTHESIS
+     *   - Language-agnostic: works in Hindi, Spanish, etc. without new rules
+     *
+     * Falls back to regex classifier if Ollama is unavailable at classification time.
      */
     private QueryType classifyQuery(String question) {
+        ensurePrototypesLoaded();
+        if (synthesisCentroid == null) {
+            // Prototype loading failed (Ollama not ready) — use regex fallback
+            return classifyQueryRegex(question);
+        }
+        try {
+            // Embed question in passage space (no instruction prefix) for symmetric comparison
+            float[] qVec = embeddingModel.embed(question).content().vector();
+
+            float simSynthesis  = cosineSimilarity(qVec, synthesisCentroid);
+            float simCode       = cosineSimilarity(qVec, codeSearchCentroid);
+            float simFactoid    = cosineSimilarity(qVec, factoidCentroid);
+
+            System.out.printf("[CLASSIFIER] Sim → SYNTHESIS:%.3f  CODE:%.3f  FACTOID:%.3f%n",
+                              simSynthesis, simCode, simFactoid);
+
+            if (simSynthesis >= simCode && simSynthesis >= simFactoid) return QueryType.SYNTHESIS;
+            if (simCode      >= simFactoid)                             return QueryType.CODE_SEARCH;
+            return QueryType.FACTOID;
+
+        } catch (Exception e) {
+            System.out.println("[CLASSIFIER] Embedding failed, using regex fallback: " + e.getMessage());
+            return classifyQueryRegex(question);
+        }
+    }
+
+    /**
+     * Loads prototype embeddings for all three query classes and averages them
+     * into per-class centroid vectors. Runs at most once (lazy, thread-safe via DCL).
+     * Uses mxbai-embed-large with NO instruction prefix — symmetric embedding space
+     * is appropriate for query-to-query comparison (vs. query-to-document retrieval).
+     */
+    private void ensurePrototypesLoaded() {
+        if (synthesisCentroid != null) return;  // fast path — already loaded
+        synchronized (centroidLock) {
+            if (synthesisCentroid != null) return;  // double-checked locking
+            try {
+                System.out.println("[CLASSIFIER] Computing prototype centroids from mxbai-embed-large...");
+                synthesisCentroid  = computeCentroid(SYNTHESIS_PROTOTYPES);
+                codeSearchCentroid = computeCentroid(CODE_SEARCH_PROTOTYPES);
+                factoidCentroid    = computeCentroid(FACTOID_PROTOTYPES);
+                System.out.printf("[CLASSIFIER] Ready. Prototype dim=%d, classes=3%n",
+                                  synthesisCentroid.length);
+            } catch (Exception e) {
+                System.out.println("[CLASSIFIER] Prototype load FAILED — will use regex: " + e.getMessage());
+                // Leave centroids null so caller falls back to regex
+            }
+        }
+    }
+
+    /** Embeds each prototype sentence and returns their element-wise average (centroid). */
+    private float[] computeCentroid(List<String> prototypes) {
+        List<float[]> vectors = new ArrayList<>();
+        for (String proto : prototypes) {
+            vectors.add(embeddingModel.embed(proto).content().vector());
+        }
+        int dim = vectors.get(0).length;
+        float[] centroid = new float[dim];
+        for (float[] v : vectors) {
+            for (int i = 0; i < dim; i++) centroid[i] += v[i];
+        }
+        for (int i = 0; i < dim; i++) centroid[i] /= vectors.size();
+        return centroid;
+    }
+
+    /** Standard cosine similarity between two vectors. Returns 0 for zero vectors. */
+    private float cosineSimilarity(float[] a, float[] b) {
+        double dot = 0, normA = 0, normB = 0;
+        for (int i = 0; i < a.length; i++) {
+            dot   += (double) a[i] * b[i];
+            normA += (double) a[i] * a[i];
+            normB += (double) b[i] * b[i];
+        }
+        if (normA == 0 || normB == 0) return 0f;
+        return (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
+    }
+
+    /**
+     * Regex-based fallback classifier. Used when the embedding model is unavailable
+     * (e.g., Ollama not ready during prototype loading) or on embedding exceptions.
+     * Kept as a safety net — the embedding classifier handles everything in normal operation.
+     */
+    private QueryType classifyQueryRegex(String question) {
         String q = question.toLowerCase().trim();
         if (q.matches(".*(summarize|summarise|overview|outline|explain the|describe the|" +
                       "tell me about|what does (this|the) document|what is (this|the) document|" +
                       "key (points|topics)|main (points|topics)|topics covered).*")) {
             return QueryType.SYNTHESIS;
         }
-        // ≤5 words covers "what is list in python", "explain python dict", etc.
         if (q.split("\\s+").length <= 5) {
             return QueryType.CODE_SEARCH;
         }
@@ -487,7 +621,7 @@ public class ChatbotService {
         double effectiveMinScore = switch (queryType) {
             case SYNTHESIS   -> Math.min(minScore, relaxMinScoreSynthesis);
             case CODE_SEARCH -> Math.min(minScore, relaxMinScoreCode);
-            default          -> minScore;
+            default          -> Math.min(minScore, relaxMinScoreFactoid);
         };
 
         // Use a lower CRAG approval threshold for synthesis/code:

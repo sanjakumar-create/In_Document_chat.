@@ -331,12 +331,20 @@
 
             // askAll → pass filenames=ALL (no filter, searches everything)
             // selectedFiles → pass selected filenames
-            // fallback → use last uploaded file (backward-compat UX)
+            // NO fallback: if nothing selected, warn the user
             let filenamesToQuery;
             if (!askAll) {
                 const selected = documents.filter(d => selectedFiles.has(d.id)).map(d => d.name);
-                filenamesToQuery = selected.length > 0 ? selected : [documents[documents.length - 1].name];
+                if (selected.length === 0) {
+                    setMessages(prev => [...prev,
+                        { role: 'user', content: textToAsk, id: Date.now() - 1 },
+                        { role: 'ai', content: "⚠️ No document selected. Please check one or more documents in the Knowledge Base panel on the left, or click '⊕ All Docs' to search across all ingested files.", citations: [], id: Date.now(), isError: false }
+                    ]);
+                    return;
+                }
+                filenamesToQuery = selected;
             }
+
 
             setInput('');
             if (textareaRef.current) { textareaRef.current.style.height = 'auto'; }

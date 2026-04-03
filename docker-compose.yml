@@ -1,5 +1,3 @@
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # The Vault — Full Stack
 #
@@ -36,7 +34,6 @@ services:
       timeout: 5s
       retries: 5
 
-
   app:
     build:
       context: .
@@ -44,7 +41,7 @@ services:
     image: vault-app:latest
     container_name: vault-app
     ports:
-      - "8081:8081"
+      - "8085:8081"
     environment:
       # Ollama runs on the host, not in Docker.
       # host.docker.internal resolves to the host machine on macOS and Windows

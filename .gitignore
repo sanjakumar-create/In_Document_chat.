@@ -30,12 +30,8 @@ build/
 !**/src/test/**/build/
 
 ### VS Code ###
+.claude/
 .vscode/
-CLAUDE.md
-remediation.md
-robust_archi.md
-remediation_v3.md
-explanation.md
-fix.md
-architecture.md
-command.md
+*.md
+!README.md
+!architecture.md
