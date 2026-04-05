@@ -27,13 +27,13 @@ setup: check-docker check-ollama pull-models
 	@sleep 10
 	@$(MAKE) status
 	@echo ""
-	@echo "Setup complete. Open http://localhost:8081 in your browser."
+	@echo "Setup complete. Open http://localhost:8085 in your browser."
 	@echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
 run:
 	docker-compose up -d
-	@echo "Services started. UI: http://localhost:8081"
+	@echo "Services started. Open http://localhost:8085 in your browser."
 
 stop:
 	docker-compose stop
@@ -58,8 +58,8 @@ status:
 	  curl -s --max-time 3 $(OLLAMA_URL) > /dev/null 2>&1 && echo "ONLINE" || echo "OFFLINE"
 	@printf "  ChromaDB  (port 8888):  "; \
 	  curl -s --max-time 3 http://localhost:8888/api/v1/heartbeat > /dev/null 2>&1 && echo "ONLINE" || echo "OFFLINE"
-	@printf "  App       (port 8081):  "; \
-	  curl -s --max-time 5 http://localhost:8081/api/status > /dev/null 2>&1 && echo "ONLINE" || echo "OFFLINE"
+	@printf "  App       (port 8085):  "; \
+	  curl -s --max-time 5 http://localhost:8085/api/status > /dev/null 2>&1 && echo "ONLINE" || echo "OFFLINE"
 	@echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────

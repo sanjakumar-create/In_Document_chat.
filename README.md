@@ -231,61 +231,177 @@ The Mac is managed by an MDM policy (Mosyle). The firewall was blocking incoming
 
 ## 3. How to Run
 
-### Prerequisites (one-time)
+> **Tesseract OCR is automatically installed inside Docker** — you do NOT need to install it on your machine. It is bundled into the Docker image via the Dockerfile.
 
+### System Requirements
+
+| Requirement | Minimum | Notes |
+|---|---|---|
+| RAM | 16 GB | Gemma2 9B needs ~8 GB VRAM/RAM for inference |
+| Disk | 20 GB free | ~6 GB models + Docker images + ChromaDB data |
+| GPU | Recommended | Apple Silicon (M1+), NVIDIA, or AMD. CPU works but is slow (~60s/query) |
+| OS | macOS / Linux / Windows (WSL2) | See platform-specific steps below |
+
+---
+
+### Step 1 — Install Prerequisites (one-time)
+
+#### macOS
 ```bash
-# 1. Install Ollama (for macOS)
+# Install Homebrew if you don't have it
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install git + make (comes with Xcode Command Line Tools)
+xcode-select --install
+# Click "Install" in the popup and wait for it to finish.
+
+# Install Ollama
 brew install ollama
 
-# 2. Pull required AI models (~6 GB total)
-ollama pull gemma2              # Generation model (~5.5 GB)
-ollama pull mxbai-embed-large   # Embedding model (~670 MB)
+# Install ngrok (for sharing with teammates over internet)
+brew install ngrok/ngrok/ngrok
 
-# 3. Verify models
-ollama list
-# Expected: gemma2:latest, mxbai-embed-large:latest
-
-# 4. Install Docker Desktop and ensure it's running
+# Install Docker Desktop
+# Download from: https://www.docker.com/products/docker-desktop/
+# Start Docker Desktop after installing and wait until the whale icon is in your menu bar.
 ```
 
-### Day-to-Day Startup (run in order)
+#### Linux (Ubuntu / Debian)
+```bash
+# Install git + make
+sudo apt-get update && sudo apt-get install -y git make curl
 
-**Terminal 1 — Start Ollama (your GPU):**
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Install Docker + Docker Compose
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER   # then log out and back in
+
+# Install ngrok
+curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+sudo apt update && sudo apt install ngrok
+```
+
+#### Windows
+```
+1. Install WSL2: https://learn.microsoft.com/en-us/windows/wsl/install
+2. Install Docker Desktop with WSL2 backend: https://www.docker.com/products/docker-desktop/
+3. Inside WSL2 terminal, run:
+   sudo apt-get install -y git make curl
+   curl -fsSL https://ollama.com/install.sh | sh
+4. All remaining commands run inside WSL2.
+5. ngrok: download from https://ngrok.com/download and run inside WSL2
+```
+
+---
+
+### Step 2 — Clone the Repository
+
+```bash
+git clone https://github.com/sanjakumar-create/In_Document_chat..git
+cd In_Document_chat.
+```
+
+---
+
+### Step 3 — Configure Your IP (for distributed inference)
+
+Open `src/main/resources/application.properties` and replace `<YOUR-LAN-IP>` with your machine's actual LAN IP:
+
+```bash
+# Find your LAN IP:
+ipconfig getifaddr en0        # macOS
+hostname -I | awk '{print $1}' # Linux
+```
+
+Then update line 68 in `application.properties`:
+```properties
+inference.distributed.nodes=myself|http://192.168.x.x:11434|2
+```
+
+> **If you just want to run solo** (no team distributed inference), you can skip this or just disable distributed mode:
+> ```properties
+> inference.distributed.enabled=false
+> ```
+
+---
+
+### Step 4 — Pull AI Models
+
+```bash
+# ~6 GB total download — do this once
+ollama pull gemma2              # 5.5 GB generation model
+ollama pull mxbai-embed-large   # 670 MB embedding model
+
+# Verify both downloaded:
+ollama list
+# Should show: gemma2:latest and mxbai-embed-large:latest
+```
+
+---
+
+### Step 5 — Start the App
+
+**Terminal 1 — Start Ollama (leave running):**
 ```bash
 OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
-> Leave this running. The `0.0.0.0` flag exposes Ollama to the LAN for distributed inference. Without it, only your machine can use Ollama. If you see "address already in use", quit the Ollama menu bar app first.
+> If you see `address already in use` — quit the Ollama menu bar app (macOS) or run `pkill ollama` (Linux) first, then retry.
 
-**Terminal 2 — Start the app:**
+**Terminal 2 — First time: build + start everything:**
 ```bash
-cd /Users/makumar/Documents/java/In_Document_chat.
-
-# First time ever:
+# From inside the cloned repo directory:
 make setup
+```
+This builds the Docker image (~3 minutes on first run — downloads Maven dependencies), starts ChromaDB, and starts the Spring Boot app.
 
-# Every subsequent start:
+**Every subsequent start (after first setup):**
+```bash
 make run
 ```
 
-**Terminal 3 — Start the internet tunnel (if sharing with others):**
-```bash
-ngrok http 8085
-```
-> Copy the `https://xxxx.ngrok-free.app` URL and share it. See Section 4 for details.
+---
 
-**Check everything is healthy:**
+### Step 6 — Open the UI
+
+Open your browser and go to:
+```
+http://localhost:8085
+```
+
+> **Why 8085?** The Spring Boot app runs on port 8081 *inside* Docker. Docker maps it to 8085 on your machine (`8085:8081` in `docker-compose.yml`).
+
+---
+
+### Step 7 — Verify Everything Is Healthy
+
 ```bash
 make status
-# OR individually:
-curl http://localhost:8085/api/status          # App
-curl http://localhost:8888/api/v1/heartbeat    # ChromaDB
-curl http://localhost:11434/api/tags           # Ollama models
 ```
 
-### Rebuild After Code Changes
+Expected output:
+```
+=== Service Status ===
+  Ollama    (port 11434): ONLINE
+  ChromaDB  (port 8888):  ONLINE
+  App       (port 8085):  ONLINE
+```
+
+You can also verify individually:
 ```bash
-make rebuild   # Rebuilds Docker image + restarts container (picks up all code + config changes)
-make logs      # Watch live logs
+curl http://localhost:8085/api/status          # Spring Boot app
+curl http://localhost:8888/api/v1/heartbeat    # ChromaDB
+curl http://localhost:11434/api/tags           # Ollama (lists loaded models)
+```
+
+---
+
+### After Code Changes
+```bash
+make rebuild   # Rebuilds the Docker image and restarts. Picks up all Java + config changes.
+make logs      # Watch live logs (Ctrl+C to exit)
 ```
 
 ### Makefile Command Reference
