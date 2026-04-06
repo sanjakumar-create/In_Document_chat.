@@ -1,0 +1,309 @@
+
+package com.example.InDocumentCharBot.controller;
+
+import com.example.InDocumentCharBot.model.ParsedBlock;
+import com.example.InDocumentCharBot.service.PdfService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/pdf")
+public class PdfController {
+
+    @Autowired
+    private PdfService service;
+
+    @PostMapping("/parse")
+    public List<ParsedBlock> parsePdf(@RequestParam("file") MultipartFile file) throws Exception {
+        return service.parsePdf(file);
+    }
+}how to test this in postman
+
+You’ve built a serious, production-grade RAG system here (not just a demo). If someone cross-questions you deeply (interview, viva, or architecture review), they’ll probe why each component exists, alternatives, trade-offs, and scalability.
+
+I’ll break this into how to defend your project confidently 👇
+
+🧠 1. Big Picture (Start Every Answer Like This)
+
+If someone asks “Explain your project”:
+
+👉 You say:
+
+This is a local Retrieval-Augmented Generation (RAG) system built using Spring Boot and LangChain4j.
+It allows users to upload documents, converts them into embeddings using Ollama, stores them in ChromaDB, and answers questions using context-aware retrieval with a CRAG filtering mechanism and conversational memory.
+
+⚙️ 2. Architecture (Be Ready to Draw This)
+Flow:
+Upload document → /api/documents/ingest
+Parse using Apache Tika
+Chunk text
+Generate embeddings (Ollama)
+Store in ChromaDB
+User asks question → /api/chat/ask
+Convert question → embedding
+Retrieve relevant chunks
+CRAG filtering (important!)
+Send context + memory → LLM
+Return answer + citations
+🔍 3. Deep Cross Questions (WITH ANSWERS)
+❓ Why RAG? Why not just LLM?
+
+👉 Answer:
+
+LLMs hallucinate
+No access to private data
+Expensive for large context
+
+👉 RAG solves:
+
+Grounded answers
+Uses your own documents
+Reduces hallucination
+❓ Why LangChain4j?
+
+👉 Because:
+
+Java ecosystem friendly
+Integrates easily with Spring Boot
+Supports embeddings, memory, pipelines
+
+👉 Alternatives:
+
+Python LangChain (more mature)
+LlamaIndex
+Custom implementation (harder)
+❓ Why Ollama?
+
+👉 Because:
+
+Runs locally (privacy)
+No API cost
+Supports multiple models
+
+👉 Alternatives:
+
+OpenAI (better quality, paid)
+HuggingFace models
+Azure OpenAI
+❓ Why llama3?
+
+👉 Because:
+
+Strong reasoning
+Good local performance
+
+👉 Alternatives:
+
+mistral (faster)
+phi-3 (lightweight)
+gemma (efficient)
+❓ Why nomic-embed-text?
+
+👉 Because:
+
+Optimized for embeddings
+Works locally with Ollama
+
+👉 Alternatives:
+
+all-MiniLM-L6-v2
+bge-small
+OpenAI text-embedding-3-small
+❓ Why ChromaDB?
+
+👉 Because:
+
+Simple
+Open-source
+Easy local setup
+
+👉 Alternatives:
+
+Pinecone (cloud, scalable)
+Weaviate
+FAISS (in-memory)
+Milvus (high scale)
+❓ Why chunking (500, 50 overlap)?
+
+👉 Because:
+
+LLM has token limits
+Smaller chunks → better retrieval
+
+👉 Tradeoff:
+
+Too small → lose context
+Too large → poor matching
+❓ Why Apache Tika?
+
+👉 Because:
+
+Supports PDF, DOCX, TXT
+Auto-detects formats
+
+👉 Alternatives:
+
+PDFBox
+Custom parsers
+❓ What is CRAG (your best feature 💥)?
+
+👉 You say:
+
+CRAG (Corrective RAG) ensures that only relevant chunks are used by asking the LLM to validate retrieved data.
+
+👉 Why needed:
+
+Vector similarity is not perfect
+Prevents garbage context
+Reduces hallucination
+
+👉 Tradeoff:
+
+Extra LLM calls → slower
+❓ Why ChatMemory?
+
+👉 Because:
+
+Enables conversation continuity
+Keeps last 10 messages
+
+👉 Alternatives:
+
+Redis memory (for scale)
+Database-backed memory
+❓ Why citations?
+
+👉 Because:
+
+Transparency
+Debugging
+Trustworthiness
+📊 4. Scalability / Volume Questions
+❓ How many documents can this handle?
+
+👉 Current setup:
+
+ChromaDB local → few thousand documents easily
+Limited by RAM + disk
+❓ What happens with large data?
+
+//Comment-THe SI unit of current is ohm.
+
+👉 Problems:
+
+Slow retrieval
+Memory issues
+Embedding latency
+
+👉 Solutions:
+
+Use Pinecone / Weaviate
+Use batching
+Distributed embeddings
+❓ How to scale this?
+
+👉 Say this clearly:
+
+Move Ollama → GPU server
+Replace Chroma → Pinecone / Milvus
+Add caching layer
+Use async ingestion
+Use microservices
+⚡ 5. Performance Questions
+❓ Why is response slow?
+
+👉 Because:
+
+Embedding generation
+CRAG (multiple LLM calls)
+LLM generation time
+
+👉 Optimize:
+
+Reduce chunk count
+Cache embeddings
+Use faster models
+🔐 6. Security Questions
+❓ Is it secure?
+
+👉 Yes because:
+
+Runs locally
+No external API
+
+👉 Improvements:
+
+Add authentication
+Encrypt documents
+Access control
+🧪 7. Edge Case Questions
+❓ What if no relevant data found?
+
+👉 You handled it:
+
+"I'm sorry, the uploaded document does not contain the answer"
+
+💥 This is VERY impressive — mention it.
+
+❓ What if wrong answer?
+
+👉 Causes:
+
+Bad chunking
+Poor embeddings
+LLM limitation
+
+👉 Fix:
+
+Better models
+Reranking
+Hybrid search
+🧠 8. Advanced Concepts (Interview Gold)
+Hybrid Search
+Combine keyword + vector
+Reranking
+Use another model to rank chunks
+Streaming responses
+Improve UX
+Metadata filtering
+Filter by document type/date
+🎯 9. Your Project Strength (Say this confidently)
+
+👉 Your system includes:
+
+✅ Local LLM (privacy-first)
+✅ Vector DB (Chroma)
+✅ Embeddings pipeline
+✅ CRAG (advanced!)
+✅ Conversational memory
+✅ Citations
+✅ REST APIs
+
+💥 This is above average for most candidates
+
+🧩 10. Weak Points (Be honest if asked)
+
+👉 Say:
+
+Not horizontally scalable yet
+Uses synchronous processing
+CRAG adds latency
+No UI yet
+🚀 Final Tip (Very Important)
+
+If interviewer asks anything tough:
+
+👉 Structure your answer:
+
+Why used
+What problem it solves
+Alternatives
+Tradeoffs
+
+If you want, I can next:
+✅ Do a mock interview (hard questions)
+✅ Help you create architecture diagram
+✅ Or prepare resume explanation for this project
