@@ -39,7 +39,7 @@ import java.util.Arrays;
 import java.util.List;
 import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey;
 
-@Service
+//@Service
 public class DocumentIngestionService {
 
     private final EmbeddingModel embeddingModel;

@@ -1,7 +1,8 @@
 package com.example.local_notebooklm.controller;
 
 import com.example.local_notebooklm.dto.ChatResponse;
-import com.example.local_notebooklm.service.ChatbotService;
+import com.example.local_notebooklm.chat.orchestrator.ChatOrchestrator;
+import com.example.local_notebooklm.chat.memory.ChatMemoryService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
@@ -13,20 +14,22 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/chat")
 public class ChatController {
 
-    private final ChatbotService chatbotService;
+    private final ChatOrchestrator chatOrchestrator;
+    private final ChatMemoryService chatMemoryService;
 
-    public ChatController(ChatbotService chatbotService) {
-        this.chatbotService = chatbotService;
+    public ChatController(ChatOrchestrator chatOrchestrator, ChatMemoryService chatMemoryService) {
+        this.chatOrchestrator = chatOrchestrator;
+        this.chatMemoryService = chatMemoryService;
     }
 
     /**
      * Run the full CRAG pipeline for a question, optionally scoped to one or more documents.
      *
      * Multi-file support:
-     *   filenames=A.pdf,B.pdf  → query those two files (ChromaDB $in filter)
-     *   filenames=ALL          → query ALL ingested documents (no filter)
-     *   filename=A.pdf         → legacy single-file param (backward compatible)
-     *   (neither provided)     → queries ALL documents
+     * filenames=A.pdf,B.pdf  → query those two files (ChromaDB $in filter)
+     * filenames=ALL          → query ALL ingested documents (no filter)
+     * filename=A.pdf         → legacy single-file param (backward compatible)
+     * (neither provided)     → queries ALL documents
      *
      * sessionId: UUID from crypto.randomUUID() generated once per browser tab.
      * Each tab has its own isolated 20-message conversation window.
@@ -44,7 +47,7 @@ public class ChatController {
 
         // Resolve filenames: new param wins over legacy; null resolved → ALL (no filter)
         List<String> resolved = resolveFilenames(filename, filenames);
-        return chatbotService.askAdvancedQuestion(question, minScore, maxResults, resolved, sessionId);
+        return chatOrchestrator.askAdvancedQuestion(question, minScore, maxResults, resolved, sessionId);
     }
 
     /**
@@ -54,7 +57,7 @@ public class ChatController {
     @PostMapping("/clear")
     public String clearHistory(
             @RequestParam(required = false, defaultValue = "default-session") String sessionId) {
-        chatbotService.clearHistory(sessionId);
+        chatMemoryService.clearHistory(sessionId);
         return "Conversation memory cleared for session: " + sessionId;
     }
 
@@ -70,9 +73,9 @@ public class ChatController {
                 return null;  // null = no ChromaDB filter = search all documents
             }
             List<String> list = Arrays.stream(filenames.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList());
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toList());
             return list.isEmpty() ? null : list;
         }
         if (filename != null && !filename.isBlank()) {

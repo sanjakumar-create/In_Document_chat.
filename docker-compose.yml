@@ -41,7 +41,7 @@ services:
     image: vault-app:latest
     container_name: vault-app
     ports:
-      - "8085:8081"
+      - "8085:8083"
     environment:
       # Ollama runs on the host, not in Docker.
       # host.docker.internal resolves to the host machine on macOS and Windows

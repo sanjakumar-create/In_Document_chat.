@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
 
 import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey;
 
-@Service
+//@Service
 public class ChatbotService {
 
     // Classifies the user's query so the pipeline can adapt thresholds and HyDE strategy.
